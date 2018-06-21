@@ -3,7 +3,7 @@
 	17th October 2014
 
 	Author: Xinhuan @ US Frostmourne Alliance
-	Fixes: by many addon Fans.	 
+	Fixes: by many addon Fans.
 	*****************************************************************
 	Description:
 		Type /bi or /bankitems to see what is currently in your
@@ -12,7 +12,7 @@
 		An addon that remembers the contents of your bank, bags,
 		mail, equipped, currency, AH, void storage and display
 		them anywhere in the world.
-		
+
 		Also able to remember/display the banks of any character
 		on the same account on any server, as well as searching
 		and exporting lists of bag/bank items out.
@@ -21,12 +21,12 @@
 		if you are able to view them. Use /bigb to see them. Note
 		that Guild Banks are a shared repository and changes can
 		occur to it by other members of your guild.
-		
+
 
 	- Curse: http://www.curse.com/addons/wow/bank-items
 	- Project site: http://www.wowace.com/addons/bank-items/
 	- GitHub: https://github.com/JoseJimeniz/BankItems
-	
+
 
 	Plugins:
 		These plugins allow clicking on the panel/plugin icon to
@@ -354,31 +354,42 @@ Xinhuan's Note:
 -- UPDATED: Changed layout of additional buttons.
 -- REMOVED: Support for oGlow (glowing is now built into WoW)
 
-BankItems_Save           = {}     -- table, SavedVariable, can't be local
-BankItems_SaveGuild      = {}     -- table, another SavedVariable
-local bankPlayer         = nil    -- table reference
-local bankPlayerName     = nil    -- string
-local selfPlayer         = nil    -- table reference
-local selfPlayerName     = nil    -- string
-local selfPlayerRealm    = nil    -- string
-local isBankOpen         = false  -- boolean, whether the real bank is open
-local isVoidOpen         = false  -- boolean, whether void storage is open
-local isGuildBankOpen    = false  -- boolean, whether the real guild bank is open
-local mailPage           = 1      -- integer, current page of bag 101
-local AHPage             = 1      -- integer, current page of bag 103
-local voidPage           = 1      -- integer, current page of bag 104
-local voidPageSize       = 18     -- integer, size of pages for bag 104
-local reagentBankPage    = 1      -- integer, current page of bag 105 (Reagent Bank)
-local reagentBankPageSize= 28     -- integer, size of pages for bag 105 (Reagent Bank)
-local BankItems_Quantity = 1      -- integer, used for hooking EnhTooltip data
-local bagsToUpdate       = {}     -- table, stores data about bags to update on next OnUpdate
-local mailItem           = {}     -- table, stores data about the item to be mailed
-local sortedKeys         = {}     -- table, for sorted player drop-down menu
-local sortedGuildKeys    = {}     -- table, for sorted guild drop-down menu
-local info               = {}     -- table, for drop-down menu generation
-local BankItemsCFrames   = {      -- table, own bag position tracking
+-- 3 November 2014
+-- UPDATED: Use large reagent and guild frames to show those banks
+-- ADDED: Alt and Ctrl clicking the LDB feed can now show Guild and Reagent banks
+-- ADDED: Crafting from reagent bank will now track inventory decreases
+-- ADDED: slash commands now support characters on other realms (character-realm)
+-- FIXED: Mailing across realm (character-realm) will track inventory correctly
+
+BankItems_Save           = {}		-- table, SavedVariable, can't be local
+BankItems_SaveGuild      = {}		-- table, another SavedVariable
+local bankPlayer         = nil		-- table reference
+local bankPlayerName     = nil		-- string
+local selfPlayer         = nil		-- table reference
+local selfPlayerName     = nil		-- string
+local selfPlayerRealm    = nil		-- string
+local isBankOpen         = false	-- boolean, whether the real bank is open
+local isVoidOpen         = false	-- boolean, whether void storage is open
+local isGuildBankOpen    = false	-- boolean, whether the real guild bank is open
+local mailPage           = 1		-- integer, current page of bag 101
+local AHPage             = 1		-- integer, current page of bag 103
+local voidPage           = 1		-- integer, current page of bag 104
+local voidPageSize       = 18		-- integer, size of pages for bag 104
+local reagentBankPage    = 1		-- integer, current page of bag 105 (Reagent Bank)
+local reagentBankPageSize= 28		-- integer, size of pages for bag 105 (Reagent Bank)
+local BankItems_Quantity = 1		-- integer, used for hooking EnhTooltip data
+local bagsToUpdate       = {}		-- table, stores data about bags to update on next OnUpdate
+local mailItem           = {}		-- table, stores data about the item to be mailed
+local sortedKeys         = {}		-- table, for sorted player drop-down menu
+local sortedGuildKeys    = {}		-- table, for sorted guild drop-down menu
+local info               = {}		-- table, for drop-down menu generation
+local BankItemsCFrames   = {		-- table, own bag position tracking
 	bags      = {},
 	bagsShown = 0,
+}
+local slotAdjust 		= {  		-- table, contains adjustments for finding non-nil values in updated reagent bank and void storage saved variables
+	[104] = {},
+	[105] = {},
 }
 BankItems_Cache        = {} -- table, contains a cache of items of every character on the same realm except the player
 BankItems_SelfCache    = {} -- table, contains a cache of only the player's items
@@ -402,6 +413,8 @@ local BANKITEMS_BOTTOM_SCREEN_LIMIT	= 80 -- Pixels from bottom not to overlap Ba
 local BANKITEMS_UCFA = updateContainerFrameAnchors	-- Remember Blizzard's UCFA for NON-SAFE replacement
 local BAGNUMBERS = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 100, 101, 102, 103, 104, 105} -- List of bag numbers used internally by BankItems
 local NUM_REAGENTBANKGENERIC_SLOTS = 98; --1..98 (14x7) Number of slots in the reagent bank. If Blizzard ever creates a constant, use it instead. They already have NUM_BANKGENERIC_SLOTS
+local VOID_STORAGE_MAX = 80;	--Total number of items allowed per Void Storage tab - Same name from Blizzard void storage code in case they make it a global/constant
+local VOID_STORAGE_PAGES = 2;	--Total number of Void Storage tabs - Same name from Blizzard void storage code in case they make it a global/constant
 
 local BANKITEMS_UIPANELWINDOWS_TABLE = {area = "left", pushable = 11, whileDead = 1} -- UI Panel layout to be used
 local BANKITEMS_INVSLOT = {
@@ -462,6 +475,7 @@ local GetGuildBankTabInfo, GetGuildBankItemInfo, GetGuildBankItemLink = GetGuild
 local GetInboxHeaderInfo, GetInboxItem, GetInboxItemLink = GetInboxHeaderInfo, GetInboxItem, GetInboxItemLink
 local GetItemIcon = GetItemIcon
 local GetItemInfo = GetItemInfo
+local GetPetInfoBySpeciesID = C_PetJournal.GetPetInfoBySpeciesID;
 
 -- Localize some frame references
 local BankItems_Frame
@@ -474,6 +488,11 @@ local BagButtonAr = {}
 local BagContainerAr = {}
 local GBButtonAr = {}
 local GBTabFrameAr = {}
+local BankItems_RBFrame --Special Reagent Bank Frame
+local RBButtonAr = {} --Reagent Bank Buttons
+local BankItems_VoidFrame --Special Void Storage Frame
+local VoidButtonAr = {} --Void Storage Buttons
+local VoidTabFrameAr = {} --Void Storage Tabs
 
 -- For hooking tooltip support
 -- LinkWrangler is supported by LinkWrangler callback methods
@@ -523,6 +542,8 @@ local BankItems_OptionsFrame_LockWindow
 local BankItems_OptionsFrame_MinimapButton
 local BankItems_OptionsFrame_WindowStyle
 local BankItems_OptionsFrame_BagParent
+local BankItems_OptionsFrame_VoidBag
+local BankItems_OptionsFrame_ReagentBag
 local BankItems_OptionsFrame_TooltipInfo
 local BankItems_GTTDropDown
 local BankItems_OptionsFrame_TTSoulbound
@@ -564,8 +585,15 @@ function BankItems_Button_OnEnter(self)
 	if t then
 		BankItems_Quantity = t.count or 1
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetHyperlink(t.link)
-		BankItems_AddEnhTooltip(t.link, BankItems_Quantity)
+		local link = t.link
+		if link:find("battlepet") then
+			local _, speciesID, level, breedQuality, maxHealth, power, speed  = strsplit(":", link)
+			local name = string.gsub(string.gsub(link, "^(.*)%[", ""), "%](.*)$", "")
+			BattlePetToolTip_Show(tonumber(speciesID), tonumber(level), tonumber(breedQuality), tonumber(maxHealth), tonumber(power), tonumber(speed), name)
+		else
+			GameTooltip:SetHyperlink(link)
+		end
+		BankItems_AddEnhTooltip(link, BankItems_Quantity)
 		if IsControlKeyDown() then ShowInspectCursor() end
 	end
 end
@@ -598,7 +626,7 @@ function BankItems_Bag_OnEnter(self)
 	elseif id == 105 then
 		GameTooltip:SetText(REAGENT_BANK)
 	elseif bankPlayer[format("Bag%d", id)] then
-		GameTooltip:SetHyperlink(bankPlayer[format("Bag%d", id)].link)
+		GameTooltip:SetHyperlink(bankPlayer[format("Bag%d", id)].link)--bag item. not need to check battlepet link.
 		BankItems_AddEnhTooltip(bankPlayer[format("Bag%d", id)].link, 1)
 	end
 end
@@ -606,237 +634,242 @@ end
 function BankItems_Bag_OnClick(self, button)
 	local bagID = self:GetID()
 	local theBag = bankPlayer[format("Bag%d", bagID)]
-
-	if button == "LeftButton" and IsShiftKeyDown() and bagID > 0 and bagID <= 11 then
-		ChatEdit_InsertLink(theBag.link)
-		return
-	end
-
-	if not theBag then
-		if bagID == 100 then
-			BankItems_Chat(L["%s data not found. Please log on this character."]:format(L["Equipped"]))
-		elseif bagID == 101 then
-			BankItems_Chat(L["Mailbox data not found. Please visit the mailbox on this character."])
-		elseif bagID == 102 then
-			BankItems_Chat(L["%s data not found. Please log on this character."]:format(CURRENCY))
-		elseif bagID == 103 then
-			BankItems_Chat(L["%s data not found. Please visit the Auction House on this character."]:format(AUCTIONS))
-		elseif bagID == 104 then
-			BankItems_Chat(L["%s data not found. Please visit the Void Storage on this character."]:format(VOID_STORAGE))
-		elseif bagID == 105 then
-			BankItems_Chat(L["%s data not found. Please log on this character."]:format(REAGENT_BANK))
-		end
-		return
-	end
-
-	local bagFrame = BagContainerAr[bagID]
-	if ( bagFrame:IsVisible() ) then
-		bagFrame:Hide()
-		return
-	end
-
-	-- Generate the frame
-	local frame = bagFrame
-	local size = theBag.size
-	
-	-- Rest of this code is copied from ContainerFrame.lua, modified slightly for size/links
-	local name = frame:GetName();
-	local bgTextureTop = _G[name.."BackgroundTop"];
-	local bgTextureMiddle = _G[name.."BackgroundMiddle1"];
-	local bgTextureMiddle2 = _G[name.."BackgroundMiddle2"];
-	local bgTextureBottom = _G[name.."BackgroundBottom"];
-	local bgTexture1Slot = _G[name.."Background1Slot"];
-	local columns = NUM_CONTAINER_COLUMNS;
-	local rows = ceil(size / columns);
-	-- if id = 0 then its the backpack
-	if ( bagID == 0 ) then
-		bgTexture1Slot:Hide();
-		--_G[name.."MoneyFrame"]:Show();
-		-- Set Backpack texture
-		bgTextureTop:SetTexture("Interface\\ContainerFrame\\UI-BackpackBackground");
-		bgTextureTop:SetHeight(256);
-		bgTextureTop:SetTexCoord(0, 1, 0, 1);
-		bgTextureTop:Show();
-
-		-- Hide unused textures
-		for i=1, MAX_BG_TEXTURES do
-			_G[name.."BackgroundMiddle"..i]:Hide();
-		end
-		bgTextureBottom:Hide();
-		frame:SetHeight(BACKPACK_HEIGHT);
+	if bagID == 105 and not BankItems_Save.reagentBags then --use new Reagent Bank Frame
+		BankItems_DisplayReagentBank()
+	elseif bagID == 104 and not BankItems_Save.voidBags then --use new Void Storage Frame
+		BankItems_DisplayVoidStorage()
 	else
-		if (size == 1) then
-			-- Halloween gag gift
-			bgTexture1Slot:Show();
-			bgTextureTop:Hide();
-			bgTextureMiddle:Hide();
-			bgTextureMiddle2:Hide();
-			bgTextureBottom:Hide();
-			--_G[name.."MoneyFrame"]:Hide();
-		else
+		if button == "LeftButton" and IsShiftKeyDown() and bagID > 0 and bagID <= 11 then
+			ChatEdit_InsertLink(theBag.link)
+			return
+		end
+	
+		if not theBag then
+			if bagID == 100 then
+				BankItems_Chat(L["%s data not found. Please log on this character."]:format(L["Equipped"]))
+			elseif bagID == 101 then
+				BankItems_Chat(L["Mailbox data not found. Please visit the mailbox on this character."])
+			elseif bagID == 102 then
+				BankItems_Chat(L["%s data not found. Please log on this character."]:format(CURRENCY))
+			elseif bagID == 103 then
+				BankItems_Chat(L["%s data not found. Please visit the Auction House on this character."]:format(AUCTIONS))
+			elseif bagID == 104 then
+				BankItems_Chat(L["%s data not found. Please visit the Void Storage on this character."]:format(VOID_STORAGE))
+			elseif bagID == 105 then
+				BankItems_Chat(L["%s data not found. Please log on this character."]:format(REAGENT_BANK))
+			end
+			return
+		end
+		
+		local bagFrame = BagContainerAr[bagID]
+		if ( bagFrame:IsVisible() ) then
+			bagFrame:Hide()
+			return
+		end
+	
+		-- Generate the frame
+		local frame = bagFrame
+		local size = theBag.size
+	
+		-- Rest of this code is copied from ContainerFrame.lua, modified slightly for size/links
+		local name = frame:GetName();
+		local bgTextureTop = _G[name.."BackgroundTop"];
+		local bgTextureMiddle = _G[name.."BackgroundMiddle1"];
+		local bgTextureMiddle2 = _G[name.."BackgroundMiddle2"];
+		local bgTextureBottom = _G[name.."BackgroundBottom"];
+		local bgTexture1Slot = _G[name.."Background1Slot"];
+		local columns = NUM_CONTAINER_COLUMNS;
+		local rows = ceil(size / columns);
+		-- if id = 0 then its the backpack
+		if ( bagID == 0 ) then
 			bgTexture1Slot:Hide();
+			--_G[name.."MoneyFrame"]:Show();
+			-- Set Backpack texture
+			bgTextureTop:SetTexture("Interface\\ContainerFrame\\UI-BackpackBackground");
+			bgTextureTop:SetHeight(256);
+			bgTextureTop:SetTexCoord(0, 1, 0, 1);
 			bgTextureTop:Show();
 	
-			-- Not the backpack
-			-- Set whether or not its a bank bag
-			local bagTextureSuffix = "";
-			if ( bagID > NUM_BAG_FRAMES ) then
-				bagTextureSuffix = "-Bank";
-			elseif ( bagID == KEYRING_CONTAINER ) then
-				bagTextureSuffix = "-Keyring";
-			end
-			
-			-- Set textures
-			bgTextureTop:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
+			-- Hide unused textures
 			for i=1, MAX_BG_TEXTURES do
-				_G[name.."BackgroundMiddle"..i]:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
 				_G[name.."BackgroundMiddle"..i]:Hide();
 			end
-			bgTextureBottom:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
-			-- Hide the moneyframe since its not the backpack
-			--_G[name.."MoneyFrame"]:Hide();	
-			
-			local bgTextureCount, height;
-			local rowHeight = 41;
-			-- Subtract one, since the top texture contains one row already
-			local remainingRows = rows-1;
-
-			-- See if the bag needs the texture with two slots at the top
-			local isPlusTwoBag;
-			if ( mod(size,columns) == 2 ) then
-				isPlusTwoBag = 1;
-			end
-
-			-- Bag background display stuff
-			if ( isPlusTwoBag ) then
-				bgTextureTop:SetTexCoord(0, 1, 0.189453125, 0.330078125);
-				bgTextureTop:SetHeight(72);
+			bgTextureBottom:Hide();
+			frame:SetHeight(BACKPACK_HEIGHT);
+		else
+			if (size == 1) then
+				-- Halloween gag gift
+				bgTexture1Slot:Show();
+				bgTextureTop:Hide();
+				bgTextureMiddle:Hide();
+				bgTextureMiddle2:Hide();
+				bgTextureBottom:Hide();
+				--_G[name.."MoneyFrame"]:Hide();
 			else
-				if ( rows == 1 ) then
-					-- If only one row chop off the bottom of the texture
-					bgTextureTop:SetTexCoord(0, 1, 0.00390625, 0.16796875);
-					bgTextureTop:SetHeight(86);
-				else
-					bgTextureTop:SetTexCoord(0, 1, 0.00390625, 0.18359375);
-					bgTextureTop:SetHeight(94);
+				bgTexture1Slot:Hide();
+				bgTextureTop:Show();
+	
+				-- Not the backpack
+				-- Set whether or not its a bank bag
+				local bagTextureSuffix = "";
+				if ( bagID > NUM_BAG_FRAMES ) then
+					bagTextureSuffix = "-Bank";
+				elseif ( bagID == KEYRING_CONTAINER ) then
+					bagTextureSuffix = "-Keyring";
 				end
-			end
-			-- Calculate the number of background textures we're going to need
-			bgTextureCount = ceil(remainingRows/ROWS_IN_BG_TEXTURE);
-			
-			local middleBgHeight = 0;
-			-- If one row only special case
-			if ( rows == 1 ) then
-				bgTextureBottom:SetPoint("TOP", bgTextureMiddle:GetName(), "TOP", 0, 0);
-				bgTextureBottom:Show();
-				-- Hide middle bg textures
+				
+				-- Set textures
+				bgTextureTop:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
 				for i=1, MAX_BG_TEXTURES do
+					_G[name.."BackgroundMiddle"..i]:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
 					_G[name.."BackgroundMiddle"..i]:Hide();
 				end
-			else
-				-- Try to cycle all the middle bg textures
-				local firstRowPixelOffset = 9;
-				local firstRowTexCoordOffset = 0.353515625;
-				for i=1, bgTextureCount do
-					bgTextureMiddle = _G[name.."BackgroundMiddle"..i];
-					if ( remainingRows > ROWS_IN_BG_TEXTURE ) then
-						-- If more rows left to draw than can fit in a texture then draw the max possible
-						height = ( ROWS_IN_BG_TEXTURE*rowHeight ) + firstRowTexCoordOffset;
-						bgTextureMiddle:SetHeight(height);
-						bgTextureMiddle:SetTexCoord(0, 1, firstRowTexCoordOffset, ( height/BG_TEXTURE_HEIGHT + firstRowTexCoordOffset) );
-						bgTextureMiddle:Show();
-						remainingRows = remainingRows - ROWS_IN_BG_TEXTURE;
-						middleBgHeight = middleBgHeight + height;
+				bgTextureBottom:SetTexture("Interface\\ContainerFrame\\UI-Bag-Components"..bagTextureSuffix);
+				-- Hide the moneyframe since its not the backpack
+				--_G[name.."MoneyFrame"]:Hide();
+	
+				local bgTextureCount, height;
+				local rowHeight = 41;
+				-- Subtract one, since the top texture contains one row already
+				local remainingRows = rows-1;
+	
+				-- See if the bag needs the texture with two slots at the top
+				local isPlusTwoBag;
+				if ( mod(size,columns) == 2 ) then
+					isPlusTwoBag = 1;
+				end
+	
+				-- Bag background display stuff
+				if ( isPlusTwoBag ) then
+					bgTextureTop:SetTexCoord(0, 1, 0.189453125, 0.330078125);
+					bgTextureTop:SetHeight(72);
+				else
+					if ( rows == 1 ) then
+						-- If only one row chop off the bottom of the texture
+						bgTextureTop:SetTexCoord(0, 1, 0.00390625, 0.16796875);
+						bgTextureTop:SetHeight(86);
 					else
-						-- If not its a huge bag
-						bgTextureMiddle:Show();
-						height = remainingRows*rowHeight-firstRowPixelOffset;
-						bgTextureMiddle:SetHeight(height);
-						bgTextureMiddle:SetTexCoord(0, 1, firstRowTexCoordOffset, ( height/BG_TEXTURE_HEIGHT + firstRowTexCoordOffset) );
-						middleBgHeight = middleBgHeight + height;
+						bgTextureTop:SetTexCoord(0, 1, 0.00390625, 0.18359375);
+						bgTextureTop:SetHeight(94);
 					end
 				end
-				-- Position bottom texture
-				bgTextureBottom:SetPoint("TOP", bgTextureMiddle:GetName(), "BOTTOM", 0, 0);
-				bgTextureBottom:Show();
-			end
+				-- Calculate the number of background textures we're going to need
+				bgTextureCount = ceil(remainingRows/ROWS_IN_BG_TEXTURE);
+	
+				local middleBgHeight = 0;
+				-- If one row only special case
+				if ( rows == 1 ) then
+					bgTextureBottom:SetPoint("TOP", bgTextureMiddle:GetName(), "TOP", 0, 0);
+					bgTextureBottom:Show();
+					-- Hide middle bg textures
+					for i=1, MAX_BG_TEXTURES do
+						_G[name.."BackgroundMiddle"..i]:Hide();
+					end
+				else
+					-- Try to cycle all the middle bg textures
+					local firstRowPixelOffset = 9;
+					local firstRowTexCoordOffset = 0.353515625;
+					for i=1, bgTextureCount do
+						bgTextureMiddle = _G[name.."BackgroundMiddle"..i];
+						if ( remainingRows > ROWS_IN_BG_TEXTURE ) then
+							-- If more rows left to draw than can fit in a texture then draw the max possible
+							height = ( ROWS_IN_BG_TEXTURE*rowHeight ) + firstRowTexCoordOffset;
+							bgTextureMiddle:SetHeight(height);
+							bgTextureMiddle:SetTexCoord(0, 1, firstRowTexCoordOffset, ( height/BG_TEXTURE_HEIGHT + firstRowTexCoordOffset) );
+							bgTextureMiddle:Show();
+							remainingRows = remainingRows - ROWS_IN_BG_TEXTURE;
+							middleBgHeight = middleBgHeight + height;
+						else
+							-- If not its a huge bag
+							bgTextureMiddle:Show();
+							height = remainingRows*rowHeight-firstRowPixelOffset;
+							bgTextureMiddle:SetHeight(height);
+							bgTextureMiddle:SetTexCoord(0, 1, firstRowTexCoordOffset, ( height/BG_TEXTURE_HEIGHT + firstRowTexCoordOffset) );
+							middleBgHeight = middleBgHeight + height;
+						end
+					end
+					-- Position bottom texture
+					bgTextureBottom:SetPoint("TOP", bgTextureMiddle:GetName(), "BOTTOM", 0, 0);
+					bgTextureBottom:Show();
+				end
 				
-			-- Set the frame height
-			frame:SetHeight(bgTextureTop:GetHeight()+bgTextureBottom:GetHeight()+middleBgHeight);	
+				-- Set the frame height
+				frame:SetHeight(bgTextureTop:GetHeight()+bgTextureBottom:GetHeight()+middleBgHeight);
+			end
 		end
-	end
-
-	if (size == 1) then
-		-- Halloween gag gift
-		frame:SetHeight(70);	
-		frame:SetWidth(99);
-		_G[frame:GetName().."Name"]:SetText("");
-		local itemButton = _G[name.."Item1"];
-		itemButton:SetID(1);
-		itemButton:SetPoint("BOTTOMRIGHT", name, "BOTTOMRIGHT", -10, 5);
-		itemButton:Show();
-	else
-		frame:SetWidth(CONTAINER_WIDTH);
-
-		local index, itemButton;
-		for i=1, size, 1 do
-			index = size - i + 1;
-			itemButton = _G[name.."Item"..i];
-			itemButton:SetID(index);
-			-- Set first button
-			if ( i == 1 ) then
-				-- Anchor the first item differently if its the backpack frame
-				if ( bagID == 0 ) then
-					itemButton:SetPoint("BOTTOMRIGHT", name, "TOPRIGHT", -12, -220);
-				else
-					itemButton:SetPoint("BOTTOMRIGHT", name, "BOTTOMRIGHT", -12, 9);
-				end
-				
-			else
-				if ( mod((i-1), columns) == 0 ) then
-					itemButton:SetPoint("BOTTOMRIGHT", name.."Item"..(i - columns), "TOPRIGHT", 0, 4);	
-				else
-					itemButton:SetPoint("BOTTOMRIGHT", name.."Item"..(i - 1), "BOTTOMLEFT", -5, 0);	
-				end
-			end
+	
+		if (size == 1) then
+			-- Halloween gag gift
+			frame:SetHeight(70);
+			frame:SetWidth(99);
+			_G[frame:GetName().."Name"]:SetText("");
+			local itemButton = _G[name.."Item1"];
+			itemButton:SetID(1);
+			itemButton:SetPoint("BOTTOMRIGHT", name, "BOTTOMRIGHT", -10, 5);
 			itemButton:Show();
+		else
+			frame:SetWidth(CONTAINER_WIDTH);
+			
+			local index, itemButton;
+			for i=1, size, 1 do
+				index = size - i + 1;
+				itemButton = _G[name.."Item"..i];
+				itemButton:SetID(index);
+				-- Set first button
+				if ( i == 1 ) then
+					-- Anchor the first item differently if its the backpack frame
+					if ( bagID == 0 ) then
+						itemButton:SetPoint("BOTTOMRIGHT", name, "TOPRIGHT", -12, -220);
+					else
+						itemButton:SetPoint("BOTTOMRIGHT", name, "BOTTOMRIGHT", -12, 9);
+					end
+	
+				else
+					if ( mod((i-1), columns) == 0 ) then
+						itemButton:SetPoint("BOTTOMRIGHT", name.."Item"..(i - columns), "TOPRIGHT", 0, 4);
+					else
+						itemButton:SetPoint("BOTTOMRIGHT", name.."Item"..(i - 1), "BOTTOMLEFT", -5, 0);
+					end
+				end
+				itemButton:Show();
+			end
 		end
+		for i=size + 1, MAX_CONTAINER_ITEMS, 1 do
+			_G[name.."Item"..i]:Hide();
+		end
+	
+		if (bagID == 0) then
+			_G[name.."Name"]:SetText(BACKPACK_TOOLTIP)
+		elseif (bagID == 100) then
+			_G[name.."Name"]:SetText(L["Equipped Items"])
+		elseif (bagID == 101) then
+			_G[name.."Name"]:SetText(L["Items in Mailbox"])
+		elseif (bagID == 102) then
+			_G[name.."Name"]:SetText(CURRENCY)
+		elseif (bagID == 103) then
+			_G[name.."Name"]:SetText(AUCTIONS)
+		elseif (bagID == 104) then
+			_G[name.."Name"]:SetText(VOID_STORAGE)
+		elseif (bagID == 105) then
+			_G[name.."Name"]:SetText(REAGENT_BANK)
+		else
+			_G[name.."Name"]:SetText(BankItems_ParseLink(theBag.link))
+		end
+		_G[name.."Portrait"]:SetTexture(GetItemIcon(theBag.link) or theBag.icon)
+	
+		BankItems_PopulateBag(bagID)
+		bagFrame:ClearAllPoints()
+		if BankItems_Save.BagParent == 1 then
+			BankItemsCFrames.bags[BankItemsCFrames.bagsShown + 1] = bagFrame:GetName()
+			BankItemsUpdateCFrameAnchors()
+		elseif BankItems_Save.BagParent == 2 then
+			ContainerFrame1.bags[ContainerFrame1.bagsShown + 1] = bagFrame:GetName()
+			updateContainerFrameAnchors()
+		end
+		bagFrame:Show()
+		PlaySound(SOUNDKIT.IG_BACKPACK_OPEN)
+		bagFrame:Raise();
 	end
-	for i=size + 1, MAX_CONTAINER_ITEMS, 1 do
-		_G[name.."Item"..i]:Hide();
-	end
-
-	if (bagID == 0) then
-		_G[name.."Name"]:SetText(BACKPACK_TOOLTIP)
-	elseif (bagID == 100) then
-		_G[name.."Name"]:SetText(L["Equipped Items"])
-	elseif (bagID == 101) then
-		_G[name.."Name"]:SetText(L["Items in Mailbox"])
-	elseif (bagID == 102) then
-		_G[name.."Name"]:SetText(CURRENCY)
-	elseif (bagID == 103) then
-		_G[name.."Name"]:SetText(AUCTIONS)
-	elseif (bagID == 104) then
-		_G[name.."Name"]:SetText(VOID_STORAGE)
-	elseif (bagID == 105) then
-		_G[name.."Name"]:SetText(REAGENT_BANK)
-	else
-		_G[name.."Name"]:SetText(BankItems_ParseLink(theBag.link))
-	end
-	_G[name.."Portrait"]:SetTexture(GetItemIcon(theBag.link) or theBag.icon)
-
-	BankItems_PopulateBag(bagID)
-	bagFrame:ClearAllPoints()
-	if BankItems_Save.BagParent == 1 then
-		BankItemsCFrames.bags[BankItemsCFrames.bagsShown + 1] = bagFrame:GetName()
-		BankItemsUpdateCFrameAnchors()
-	elseif BankItems_Save.BagParent == 2 then
-		ContainerFrame1.bags[ContainerFrame1.bagsShown + 1] = bagFrame:GetName()
-		updateContainerFrameAnchors()
-	end
-	bagFrame:Show()
-	PlaySound("igBackPackOpen")
-	bagFrame:Raise();
 end
 
 function BankItems_Bag_OnShow(self)
@@ -859,7 +892,7 @@ function BankItems_Bag_OnHide(self)
 		tDeleteItem(ContainerFrame1.bags, self:GetName())	-- defined in UIParent.lua
 		updateContainerFrameAnchors()
 	end
-	PlaySound("igBackPackClose")
+	PlaySound(SOUNDKIT.IG_BACKPACK_CLOSE)
 end
 
 function BankItems_BagItem_OnEnter(self)
@@ -871,25 +904,34 @@ function BankItems_BagItem_OnEnter(self)
 		itemID = itemID + (AHPage - 1) * 18
 	elseif bagID == 104 then
 		itemID = itemID + (voidPage - 1) * voidPageSize
+		itemID = slotAdjust[104][itemID] --table listing all non-empty slots
 	elseif bagID == 105 then
 		itemID = itemID + (reagentBankPage - 1) * reagentBankPageSize
+		itemID = slotAdjust[105][itemID] --table listing all non-empty slots
 	end
 	local item = bankPlayer[format("Bag%d", bagID)][itemID]
 	if item then
+		local link = item.link
 		BankItems_Quantity = item.count or 1
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		if type(item.link) == "number" then
+		if type(link) == "number" then
 			GameTooltip:SetText(L["Money (cumulative)"])
-			SetTooltipMoney(GameTooltip, item.link)
+			SetTooltipMoney(GameTooltip, link)
 			SetMoneyFrameColor("GameTooltipMoneyFrame", HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
 		else
-			GameTooltip:SetHyperlink(item.link)
-			GameTooltip.BankItemsIsCurrency = strmatch(item.link, "(currency:%d+)")
+			if link:find("battlepet") then
+				local _, speciesID, level, breedQuality, maxHealth, power, speed  = strsplit(":", link)
+				local name = string.gsub(string.gsub(link, "^(.*)%[", ""), "%](.*)$", "")
+				BattlePetToolTip_Show(tonumber(speciesID), tonumber(level), tonumber(breedQuality), tonumber(maxHealth), tonumber(power), tonumber(speed), name)
+			else
+				GameTooltip:SetHyperlink(link)
+			end
+			GameTooltip.BankItemsIsCurrency = strmatch(link, "(currency:%d+)")
 			if GameTooltip.BankItemsIsCurrency then
 				BankItems_AddTooltipData(GameTooltip)
 				GameTooltip.BankItemsIsCurrency = nil
 			end
-			BankItems_AddEnhTooltip(item.link, BankItems_Quantity)
+			BankItems_AddEnhTooltip(link, BankItems_Quantity)
 			if item.expiry then
 				local t = SecondsToTime(item.expiry - time())
 				if t == "" then GameTooltip:AddLine(ERR_MAIL_ATTACHMENT_EXPIRED, 0.2890625, 0.6953125, 0.8359375)
@@ -932,8 +974,10 @@ function BankItems_BagItem_OnClick(self, button)
 		itemID = itemID + (AHPage - 1) * 18
 	elseif bagID == 104 then
 		itemID = itemID + (voidPage - 1) * voidPageSize
+		itemID = slotAdjust[104][itemID] --table listing all non-empty slots
 	elseif bagID == 105 then
 		itemID = itemID + (reagentBankPage - 1) * reagentBankPageSize
+		itemID = slotAdjust[105][itemID] --table listing all non-empty slots
 	end
 	local item = bankPlayer[format("Bag%d", bagID)][itemID]
 	if item then
@@ -984,22 +1028,23 @@ end
 function BankItems_Button_OnLeave(self)
 	ResetCursor()
 	GameTooltip:Hide()
+	BattlePetTooltip:Hide()
 end
 
 function BankItems_Frame_OnShow(self)
 	BankItems_CreateFrames()
 	BankItems_Frame:SetUserPlaced(nil)	-- Temporary
-	PlaySound("igMainMenuOpen")
 	BankItems_PopulateFrame()
+	PlaySound(SOUNDKIT.IG_MAINMENU_OPEN)
 end
 
 function BankItems_Frame_OnHide(self)
-	PlaySound("igMainMenuOpen")
 	for _, i in ipairs(BAGNUMBERS) do
 		if BagContainerAr[i] then
 			BagContainerAr[i]:Hide()
 		end
 	end
+	PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
 end
 
 function BankItems_Frame_OnDragStart(self)
@@ -1051,11 +1096,13 @@ function BankItems_Frame_OnEvent(self, event, ...)
 		BankItems_SaveItems()
 		BankItems_Generate_SelfItemCache()
 
+	elseif event== "PLAYERREAGENTBANKSLOTS_CHANGED" then --watch for reagent bank updates
+		BankItems_SaveReagentBank() --bank doesn't need to be open to read reagent bank contents
+		BankItems_Generate_SelfItemCache()
 	elseif event == "BANKFRAME_OPENED" then
 		isBankOpen = true
 		BankItems_SaveItems()
 		BankItems_Generate_SelfItemCache()
-
 	elseif event == "BANKFRAME_CLOSED" then
 		isBankOpen = false
 
@@ -1081,15 +1128,15 @@ function BankItems_Frame_OnEvent(self, event, ...)
 	elseif event == "KNOWN_CURRENCY_TYPES_UPDATE" or event == "CURRENCY_DISPLAY_UPDATE" then
 		BankItems_SaveCurrency()
 		BankItems_Generate_SelfItemCache()
-	
+
 	elseif event == "VOID_STORAGE_CONTENTS_UPDATE" or event == "VOID_TRANSFER_DONE" or event == "VOID_STORAGE_UPDATE" or event == "VOID_STORAGE_OPEN" then
 		isVoidOpen = true
 		BankItems_SaveVoidStorage()
 		BankItems_Generate_SelfItemCache()
-	
+
 	elseif event == "VOID_STORAGE_CLOSE" then
 		isVoidOpen = false
-	
+
 	elseif event == "AUCTION_OWNED_LIST_UPDATE" or event == "AUCTION_HOUSE_SHOW" then
 		BankItems_SaveAuctions()
 		BankItems_Generate_SelfItemCache()
@@ -1138,7 +1185,41 @@ function BankItems_UpdateFrame_OnUpdate(self, elapsed)
 	BankItems_Generate_SelfItemCache()
 	self:SetScript("OnUpdate", nil)
 end
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Generic Handlers for Special Bank Frames
+function BankItems_SpecialOnEnter_Handler(self,item) --handles OnEnter functions for Guild Bank, Reagent Bank, and Void Storage buttons
+	if item then
+		BankItems_Quantity = item.count or 1
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		local link = item.link
+		if link:find("battlepet") then --6.0 build converts battlepet to normal link, but I leave this code for future use.
+			local _, speciesID, level, breedQuality, maxHealth, power, speed  = strsplit(":", link)
+			local name = string.gsub(string.gsub(link, "^(.*)%[", ""), "%](.*)$", "")
+			BattlePetToolTip_Show(tonumber(speciesID), tonumber(level), tonumber(breedQuality), tonumber(maxHealth), tonumber(power), tonumber(speed), name)
+		else
+			GameTooltip:SetHyperlink(link)
+		end
+		BankItems_AddEnhTooltip(link, BankItems_Quantity)
+		if IsControlKeyDown() then
+			ShowInspectCursor()
+		end
+	end
+end
 
+function BankItems_SpecialOnClick_Handler(item,button) --handles OnClick functions for Guild Bank, Reagent Bank, and Void Storage buttons
+	if item then
+		if IsControlKeyDown() then
+			DressUpItemLink(item.link)
+		elseif button == "LeftButton" and IsShiftKeyDown() then
+			ChatEdit_InsertLink(item.link)
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Guild Bank Stuff
 function BankItems_GBFrame_OnShow()
 	BankItems_CreateFrames()
 	BankItems_GBFrame:SetUserPlaced(nil)	-- Temporary
@@ -1192,11 +1273,11 @@ function BankItems_GBFrame_OnShow()
 		BankItems_GBFrame.infotext:Show()
 		BankItems_GuildDropdownText:SetText("")
 	end
-	PlaySound("GuildVaultOpen")
+	PlaySound(SOUNDKIT.GUILD_VAULT_OPEN)
 end
 
 function BankItems_GBFrame_OnHide()
-	PlaySound("GuildVaultClose")
+	PlaySound(SOUNDKIT.GUILD_VAULT_CLOSE)
 end
 
 function BankItems_GBFrame_OnEvent(self, event, ...)
@@ -1239,27 +1320,11 @@ function BankItems_GuildTabButton_OnClick(self, button)
 end
 
 function BankItems_GuildBankItem_OnEnter(self)
-	local item = BankItems_SaveGuild[BankItems_GuildDropdown.selectedValue][BankItems_GBFrame.currentTab][self:GetID()]
-	if item then
-		BankItems_Quantity = item.count or 1
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetHyperlink(item.link)
-		BankItems_AddEnhTooltip(item.link, BankItems_Quantity)
-		if IsControlKeyDown() then
-			ShowInspectCursor()
-		end
-	end
+	BankItems_SpecialOnEnter_Handler(self, BankItems_SaveGuild[BankItems_GuildDropdown.selectedValue][BankItems_GBFrame.currentTab][self:GetID()])
 end
 
 function BankItems_GuildBankItem_OnClick(self, button)
-	local item = BankItems_SaveGuild[BankItems_GuildDropdown.selectedValue][BankItems_GBFrame.currentTab][self:GetID()]
-	if item then
-		if IsControlKeyDown() then
-			DressUpItemLink(item.link)
-		elseif button == "LeftButton" and IsShiftKeyDown() then
-			ChatEdit_InsertLink(item.link)
-		end
-	end
+	BankItems_SpecialOnClick_Handler(BankItems_SaveGuild[BankItems_GuildDropdown.selectedValue][BankItems_GBFrame.currentTab][self:GetID()],button)
 end
 
 function BankItems_GBFrame_OnDragStart(self)
@@ -1273,6 +1338,80 @@ function BankItems_GBFrame_OnDragStop(self)
 	self:SetUserPlaced(nil)
 end
 
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Reagent Bank Stuff
+function BankItems_RBFrame_OnShow()
+	BankItems_CreateFrames()
+	BankItems_RBFrame:SetUserPlaced(nil)	-- Temporary
+	BankItems_PopulateReagentBank()
+	PlaySound(SOUNDKIT.IG_MAINMENU_OPEN)
+	BagButtonAr[105].HighlightTexture:Show()
+end
+
+function BankItems_RBFrame_OnHide()
+	PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
+	BagButtonAr[105].HighlightTexture:Hide()
+end
+
+function BankItems_ReagentBankItem_OnEnter(self)
+	BankItems_SpecialOnEnter_Handler(self, bankPlayer.Bag105[self:GetID()])
+end
+
+function BankItems_ReagentBankItem_OnClick(self, button)
+	BankItems_SpecialOnClick_Handler(bankPlayer.Bag105[self:GetID()],button)
+end
+
+function BankItems_RBFrame_OnDragStart(self)
+	self:StartMoving()
+end
+
+function BankItems_RBFrame_OnDragStop(self)
+	local _
+	self:StopMovingOrSizing()
+	BankItems_Save.RBpospoint, _, BankItems_Save.RBposrelpoint, BankItems_Save.RBposoffsetx, BankItems_Save.RBposoffsety = BankItems_RBFrame:GetPoint()
+	self:SetUserPlaced(nil)
+end
+
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Void Storage Stuff
+function BankItems_VoidFrame_OnShow()
+	BankItems_CreateFrames()
+	BankItems_VoidFrame:SetUserPlaced(nil)	-- Temporary
+	BankItems_PopulateVoidStorage(BankItems_VoidFrame.currentTab)
+	PlaySound(SOUNDKIT.UI_ETHEREAL_WINDOW_OPEN);
+	BagButtonAr[104].HighlightTexture:Show()
+end
+
+function BankItems_VoidFrame_OnHide()
+	PlaySound(SOUNDKIT.UI_ETHEREAL_WINDOW_CLOSE);
+	BagButtonAr[104].HighlightTexture:Hide()
+end
+
+function BankItems_VoidTabButton_OnClick(self, button)
+	BankItems_PopulateVoidStorage(self:GetID())
+end
+
+function BankItems_VoidStorageItem_OnEnter(self)
+	BankItems_SpecialOnEnter_Handler(self, bankPlayer.Bag104[self:GetID() + (BankItems_VoidFrame.currentTab - 1) * VOID_STORAGE_MAX])
+end
+
+function BankItems_VoidStorageItem_OnClick(self, button)
+	BankItems_SpecialOnClick_Handler(bankPlayer.Bag104[self:GetID() + (BankItems_VoidFrame.currentTab - 1) * VOID_STORAGE_MAX],button)
+end
+
+
+function BankItems_VoidFrame_OnDragStart(self)
+	self:StartMoving()
+end
+
+function BankItems_VoidFrame_OnDragStop(self)
+	local _
+	self:StopMovingOrSizing()
+	BankItems_Save.Voidpospoint, _, BankItems_Save.Voidposrelpoint, BankItems_Save.Voidposoffsetx, BankItems_Save.Voidposoffsety = BankItems_VoidFrame:GetPoint()
+	self:SetUserPlaced(nil)
+end
 
 ----------------------------------
 -- Create frames
@@ -1307,6 +1446,7 @@ BankItems_Frame:RegisterEvent("BANKFRAME_OPENED")
 BankItems_Frame:RegisterEvent("BANKFRAME_CLOSED")
 BankItems_Frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 BankItems_Frame:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
+BankItems_Frame:RegisterEvent("PLAYERREAGENTBANKSLOTS_CHANGED") --watch for reagent bank updates
 BankItems_Frame:RegisterEvent("BAG_UPDATE")
 BankItems_Frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 BankItems_Frame:RegisterEvent("MAIL_SHOW")
@@ -1343,6 +1483,29 @@ BankItems_GBFrame:RegisterEvent("GUILDBANK_UPDATE_TABS")
 BankItems_GBFrame:RegisterEvent("GUILDBANK_UPDATE_MONEY")
 BankItems_GBFrame:RegisterEvent("GUILDTABARD_UPDATE")
 
+BankItems_RBFrame = CreateFrame("Frame", "BankItems_RBFrame", UIParent, "BasicFrameTemplate")
+BankItems_RBFrame:Hide()
+BankItems_RBFrame:EnableMouse(true)
+BankItems_RBFrame:SetToplevel(true)
+BankItems_RBFrame:SetMovable(true)
+BankItems_RBFrame:SetClampedToScreen(true)
+
+BankItems_RBFrame:SetScript("OnShow", BankItems_RBFrame_OnShow)
+BankItems_RBFrame:SetScript("OnHide", BankItems_RBFrame_OnHide)
+BankItems_RBFrame:SetScript("OnDragStart", BankItems_RBFrame_OnDragStart)
+BankItems_RBFrame:SetScript("OnDragStop", BankItems_RBFrame_OnDragStop)
+
+BankItems_VoidFrame = CreateFrame("Frame", "BankItems_VoidFrame", UIParent, "BasicFrameTemplate")
+BankItems_VoidFrame:Hide()
+BankItems_VoidFrame:EnableMouse(true)
+BankItems_VoidFrame:SetToplevel(true)
+BankItems_VoidFrame:SetMovable(true)
+BankItems_VoidFrame:SetClampedToScreen(true)
+
+BankItems_VoidFrame:SetScript("OnShow", BankItems_VoidFrame_OnShow)
+BankItems_VoidFrame:SetScript("OnHide", BankItems_VoidFrame_OnHide)
+BankItems_VoidFrame:SetScript("OnDragStart", BankItems_VoidFrame_OnDragStart)
+BankItems_VoidFrame:SetScript("OnDragStop", BankItems_VoidFrame_OnDragStop)
 
 function BankItems_CreateFrames()
 	local temp
@@ -1393,6 +1556,18 @@ function BankItems_CreateFrames()
 	-- Close Button (inherits OnClick script to HideUIPanel(this:GetParent()))
 	temp = CreateFrame("Button", "BankItems_CloseButton", BankItems_Frame, "UIPanelCloseButton")
 	temp:SetPoint("TOPRIGHT", 0, -8)
+	temp:SetScript("OnClick", function()
+		HideUIPanel(BankItems_Frame)
+		if BankItems_GBFrame:IsVisible() then
+			HideUIPanel(BankItems_GBFrame)
+		end
+		if BankItems_VoidFrame:IsVisible() then
+			HideUIPanel(BankItems_VoidFrame)
+		end
+		if BankItems_RBFrame:IsVisible()  then
+			HideUIPanel(BankItems_RBFrame)
+		end
+	end)
 
 	-- Options Button
 	temp = CreateFrame("Button", "BankItems_OptionsButton", BankItems_Frame, "GameMenuButtonTemplate")
@@ -1415,8 +1590,7 @@ function BankItems_CreateFrames()
 		else
 			ItemButtonAr[i]:SetPoint("TOPLEFT", ItemButtonAr[i-1], "TOPRIGHT", 12, 0)
 		end
-		ItemButtonAr[i].count = _G["BankItems_Item"..i.."Count"]
-		ItemButtonAr[i].texture = _G["BankItems_Item"..i.."IconTexture"]
+		--texture and count keys no longer being used since ItemButtonTemplate already creates local keys ("Count" and "icon")
 	end
 
 	-- Create the 14 bag buttons
@@ -1424,13 +1598,13 @@ function BankItems_CreateFrames()
 		BagButtonAr[i] = CreateFrame("Button", "BankItems_Bag"..i, BankItems_Frame, "ItemButtonTemplate")
 		BagButtonAr[i]:SetID(i)
 		BagButtonAr[i].isBag = 1
+		BagButtonAr[i].showOverlay = false
 		BagButtonAr[i].HighlightTexture = BagButtonAr[i]:CreateTexture(nil, "OVERLAY")
 		BagButtonAr[i].HighlightTexture:Hide()
 		BagButtonAr[i].HighlightTexture:SetAllPoints(BagButtonAr[i])
 		BagButtonAr[i].HighlightTexture:SetTexture("Interface\\Buttons\\CheckButtonHilight")
 		BagButtonAr[i].HighlightTexture:SetBlendMode("ADD")
-		BagButtonAr[i].count = _G["BankItems_Bag"..i.."Count"]
-		BagButtonAr[i].texture = _G["BankItems_Bag"..i.."IconTexture"]
+		--texture and count keys no longer being used since ItemButtonTemplate already creates local keys ("Count" and "icon")
 	end
 	BagButtonAr[5]:SetPoint("TOPLEFT", ItemButtonAr[22], "BOTTOMLEFT", 0, -32)
 	BagButtonAr[6]:SetPoint("TOPLEFT", BagButtonAr[5], "TOPRIGHT", 12, 0)
@@ -1457,24 +1631,10 @@ function BankItems_CreateFrames()
 	BagButtonAr[103]:SetPoint("TOPLEFT", BagButtonAr[100], "TOPRIGHT", 4, 0)
 	BagButtonAr[101]:SetPoint("TOPLEFT", BagButtonAr[103], "TOPRIGHT", 4, 0)
 
-	
-	-- Create the Money frame
-	BankItems_MoneyFrame = CreateFrame("Frame", "BankItems_MoneyFrame", BankItems_Frame, "SmallMoneyFrameTemplate")
-	BankItems_MoneyFrame:SetPoint("BOTTOMRIGHT", -14, 20)
-	BankItems_MoneyFrame:UnregisterAllEvents()
-	BankItems_MoneyFrame:SetScript("OnEvent", nil)
-	BankItems_MoneyFrame:SetScript("OnShow", nil)
-	BankItems_MoneyFrame.small = 1
-	BankItems_MoneyFrame.moneyType = "PLAYER"
-	BankItems_MoneyFrame.info = {
-		collapse = 1,
-		canPickup = 1,
-		showSmallerCoins = "Backpack"
-	}
 
 	-- Create the Money Total frame
 	BankItems_MoneyFrameTotal = CreateFrame("Frame", "BankItems_MoneyFrameTotal", BankItems_Frame, "SmallMoneyFrameTemplate")
-	BankItems_MoneyFrameTotal:SetPoint("BOTTOMLEFT", 38, 20)
+	BankItems_MoneyFrameTotal:SetPoint("BOTTOMRIGHT", -8, 21)
 	BankItems_MoneyFrameTotal:UnregisterAllEvents()
 	BankItems_MoneyFrameTotal:SetScript("OnEvent", nil)
 	BankItems_MoneyFrameTotal:SetScript("OnShow", nil)
@@ -1487,7 +1647,7 @@ function BankItems_CreateFrames()
 	BankItems_MoneyFrameTotal:CreateFontString("BankItems_TotalMoneyText", "BACKGROUND", "GameFontHighlightSmall")
 	BankItems_TotalMoneyText:SetText("("..L["Total"]..")")
 	BankItems_TotalMoneyText:SetJustifyH("LEFT")
-	BankItems_TotalMoneyText:SetPoint("LEFT", "BankItems_MoneyFrameTotalCopperButton", "RIGHT", 2, 1)
+	BankItems_TotalMoneyText:SetPoint("RIGHT", "BankItems_MoneyFrameTotal", "LEFT", -3, 0)
 
 	-- Create the 14 bags
 	for _, i in ipairs(BAGNUMBERS) do
@@ -1534,8 +1694,14 @@ function BankItems_CreateFrames()
 		for j = 1, MAX_CONTAINER_ITEMS do
 			BagContainerAr[i][j] = CreateFrame("Button", name.."Item"..j, BagContainerAr[i], "ItemButtonTemplate")
 			--BagContainerAr[i][j]:SetID(j)
-			BagContainerAr[i][j].count = _G[name.."Item"..j.."Count"]
-			BagContainerAr[i][j].texture = _G[name.."Item"..j.."IconTexture"]
+			if i == 102 then -- currency bag
+				BagContainerAr[i][j].Count:SetFontObject(TextStatusBarText)
+				BagContainerAr[i][j].Count:SetPoint("BOTTOMRIGHT", 0, 0)
+				BagContainerAr[i][j].Count:SetJustifyH("LEFT")
+				BagContainerAr[i][j].Count:SetWidth(BagContainerAr[i][j]:GetWidth())
+				BagContainerAr[i][j].Count:SetNonSpaceWrap(true)
+			end
+			--texture and count keys no longer being used since ItemButtonTemplate already creates local keys ("Count" and "icon")
 		end
 		BagContainerAr[i].PortraitButton = CreateFrame("Button", name.."PortraitButton", BagContainerAr[i])
 		BagContainerAr[i].PortraitButton:SetWidth(40)
@@ -1544,7 +1710,21 @@ function BankItems_CreateFrames()
 		BagContainerAr[i].CloseButton = CreateFrame("Button", name.."CloseButton", BagContainerAr[i], "UIPanelCloseButton")
 		BagContainerAr[i].CloseButton:SetPoint("TOPRIGHT", 0, -2)
 	end
-	
+
+	-- Create the Money frame
+	BankItems_MoneyFrame = CreateFrame("Frame", "BankItems_MoneyFrame", BankItems_ContainerFrame0, "SmallMoneyFrameTemplate")
+	BankItems_MoneyFrame:SetPoint("BOTTOMRIGHT", -2, 11)
+	BankItems_MoneyFrame:UnregisterAllEvents()
+	BankItems_MoneyFrame:SetScript("OnEvent", nil)
+	BankItems_MoneyFrame:SetScript("OnShow", nil)
+	BankItems_MoneyFrame.small = 1
+	BankItems_MoneyFrame.moneyType = "PLAYER"
+	BankItems_MoneyFrame.info = {
+		collapse = 1,
+		canPickup = 1,
+		showSmallerCoins = "Backpack"
+	}
+
 	-- Create the Show All Realms checkbox
 	BankItems_ShowAllRealms_Check = CreateFrame("CheckButton", "BankItems_ShowAllRealms_Check", BankItems_Frame, "UICheckButtonTemplate")
 	BankItems_ShowAllRealms_Check:SetPoint("BOTTOMLEFT", 30, 40)
@@ -1556,11 +1736,11 @@ function BankItems_CreateFrames()
 	BankItems_ShowAllRealms_Check:SetScript("OnClick", function(self)
 		BankItems_Save.ShowAllRealms = self:GetChecked()
 		if BankItems_Save.ShowAllRealms then
-			PlaySound("igMainMenuOptionCheckBoxOff")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 			BlizzardOptionsPanel_CheckButton_Disable(BankItems_ShowOppositeFaction_Check)
 			BlizzardOptionsPanel_CheckButton_Disable(BankItems_ShowOppositeFaction_GBCheck)
 		else
-			PlaySound("igMainMenuOptionCheckBoxOn")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 			BlizzardOptionsPanel_CheckButton_Enable(BankItems_ShowOppositeFaction_Check)
 			BlizzardOptionsPanel_CheckButton_Enable(BankItems_ShowOppositeFaction_GBCheck)
 		end
@@ -1584,9 +1764,9 @@ function BankItems_CreateFrames()
 	BankItems_ShowOppositeFaction_Check:SetScript("OnClick", function(self)
 		BankItems_Save.ShowOppositeFaction = self:GetChecked()
 		if BankItems_Save.ShowOppositeFaction then
-			PlaySound("igMainMenuOptionCheckBoxOff")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 		else
-			PlaySound("igMainMenuOptionCheckBoxOn")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 		end
 		BankItems_UserDropdownGenerateKeys()
 		BankItems_UpdateMoney()
@@ -1735,12 +1915,12 @@ function BankItems_CreateFrames()
 	BagContainerAr[105].mailtext:SetPoint("BOTTOMRIGHT", BagContainerAr[105], "TOPLEFT", 140, -44)
 	BagContainerAr[105].mailtext:SetText(format("1-%d of %d", reagentBankPageSize, NUM_REAGENTBANKGENERIC_SLOTS))
 	BagContainerAr[105].mailtext:SetJustifyH("RIGHT")
-
+	--Guild Bank
 	-- Title Background
 	BankItems_GBFrame.titlebg = BankItems_GBFrame:CreateTexture(nil, "OVERLAY")
 	BankItems_GBFrame.titlebg:SetWidth(10)
 	BankItems_GBFrame.titlebg:SetHeight(18)
-	BankItems_GBFrame.titlebg:SetPoint("TOP", 106, -43)
+	BankItems_GBFrame.titlebg:SetPoint("TOP", 61, -43)
 	BankItems_GBFrame.titlebg:SetTexture("Interface\\GuildBankFrame\\UI-TabNameBorder")
 	BankItems_GBFrame.titlebg:SetTexCoord(0.0625, 0.546875, 0, 0.5625)
 
@@ -1800,7 +1980,7 @@ function BankItems_CreateFrames()
 
 	-- Create the 98 guild bank buttons
 	for i = 1, 98 do
-		GBButtonAr[i] = CreateFrame("Button", "BankItems_GBFrame_Button"..i, BankItems_GBFrame, "ItemButtonTemplate")
+		GBButtonAr[i] = CreateFrame("Button", nil, BankItems_GBFrame, "ItemButtonTemplate") --shouldn't need a global for the button names anymore
 		GBButtonAr[i]:SetID(i)
 		if i == 1 then
 			GBButtonAr[i]:SetPoint("TOPLEFT", 37, -73)
@@ -1811,8 +1991,7 @@ function BankItems_CreateFrames()
 		else
 			GBButtonAr[i]:SetPoint("TOPLEFT", GBButtonAr[i-1], "BOTTOMLEFT", 0, -7)
 		end
-		GBButtonAr[i].count = _G["BankItems_GBFrame_Button"..i.."Count"]
-		GBButtonAr[i].texture = _G["BankItems_GBFrame_Button"..i.."IconTexture"]
+		--texture and count keys no longer being used since ItemButtonTemplate already creates local keys ("Count" and "icon")
 	end
 
 	-- Create the Money frame
@@ -1831,7 +2010,7 @@ function BankItems_CreateFrames()
 		canPickup = 0,
 		showSmallerCoins = "Backpack"
 	}
-
+	
 	-- Create the tabs
 	for i = 1, MAX_GUILDBANK_TABS do
 		GBTabFrameAr[i] = CreateFrame("Frame", nil, BankItems_GBFrame)
@@ -1859,6 +2038,10 @@ function BankItems_CreateFrames()
 		GBTabFrameAr[i].button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
 		GBTabFrameAr[i].button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight")
 		GBTabFrameAr[i].button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+		GBTabFrameAr[i].searchOverlay = GBTabFrameAr[i].button:CreateTexture(nil, "OVERLAY")
+		GBTabFrameAr[i].searchOverlay:SetAllPoints()
+		GBTabFrameAr[i].searchOverlay:SetTexture(0,0,0,0.8)
+		GBTabFrameAr[i].showOverlay = false
 		if i == 1 then
 			GBTabFrameAr[i]:SetPoint("TOPLEFT", BankItems_GBFrame, "TOPRIGHT", -1, -32)
 		else
@@ -1888,11 +2071,11 @@ function BankItems_CreateFrames()
 	BankItems_ShowAllRealms_GBCheck:SetScript("OnClick", function(self)
 		BankItems_Save.ShowAllRealms = self:GetChecked()
 		if BankItems_Save.ShowAllRealms then
-			PlaySound("igMainMenuOptionCheckBoxOff")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 			BlizzardOptionsPanel_CheckButton_Disable(BankItems_ShowOppositeFaction_Check)
 			BlizzardOptionsPanel_CheckButton_Disable(BankItems_ShowOppositeFaction_GBCheck)
 		else
-			PlaySound("igMainMenuOptionCheckBoxOn")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 			BlizzardOptionsPanel_CheckButton_Enable(BankItems_ShowOppositeFaction_Check)
 			BlizzardOptionsPanel_CheckButton_Enable(BankItems_ShowOppositeFaction_GBCheck)
 		end
@@ -1914,9 +2097,9 @@ function BankItems_CreateFrames()
 	BankItems_ShowOppositeFaction_GBCheck:SetScript("OnClick", function(self)
 		BankItems_Save.ShowOppositeFaction = self:GetChecked()
 		if BankItems_Save.ShowOppositeFaction then
-			PlaySound("igMainMenuOptionCheckBoxOff")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 		else
-			PlaySound("igMainMenuOptionCheckBoxOn")
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 		end
 		BankItems_UserDropdownGenerateKeys()
 		BankItems_UpdateMoney()
@@ -1952,7 +2135,15 @@ function BankItems_CreateFrames()
 		BankItems_GenerateGuildExportText()
 		BankItems_ExportFrame:Show()
 	end)
-
+	
+	-- Create the quick search textbox
+	BankItems_GBFrame.Search = CreateFrame("EditBox", "BankItems_GBFrame_SearchBox", BankItems_GBFrame, "BagSearchBoxTemplate")
+	BankItems_GBFrame.Search:SetMaxLetters(15)
+	BankItems_GBFrame.Search:SetWidth(130)
+	BankItems_GBFrame.Search:SetHeight(20)
+	BankItems_GBFrame.Search:SetPoint("TOPRIGHT", -15, -43)
+	tinsert(ITEM_SEARCHBAR_LIST, "BankItems_GBFrame_SearchBox")
+	
 	-- Create the tabard frame
 	BankItems_GBEmblemFrame = CreateFrame("Frame", "BankItems_GBEmblemFrame", BankItems_GBFrame)
 	BankItems_GBEmblemFrame:SetWidth(80)
@@ -2022,6 +2213,261 @@ function BankItems_CreateFrames()
 	BankItems_GBEmblemFrame.BR:SetPoint("LEFT", BankItems_GBEmblemFrame.BL, "RIGHT")
 	BankItems_GBEmblemFrame.BR:SetTexCoord(1, 0.5, 0, 1)
 
+	--Reagent Bank
+	--Background Texture - Created from inherited template so we'll just modify it here
+	BankItems_RBFrame.Bg:SetSize(256,256)
+	BankItems_RBFrame.Bg:SetPoint("TOPLEFT",0,-20)
+	BankItems_RBFrame.Bg:SetPoint("BOTTOMRIGHT")
+	BankItems_RBFrame.Bg:SetTexture("Interface\\BankFrame\\Bank-Background",true)
+	BankItems_RBFrame.Bg:SetHorizTile(true)
+	BankItems_RBFrame.Bg:SetVertTile(true)
+	
+	-- Title text
+	BankItems_RBFrame.TitleText:SetPoint("TOP", -3, -5)
+
+	-- 7 column backgrounds
+	BankItems_RBFrame.colbg = {}
+	BankItems_RBFrame.colShadow = {}
+	for i = 1, 7 do
+		BankItems_RBFrame.colbg[i] = BankItems_RBFrame:CreateTexture(nil, "ARTWORK")
+		BankItems_RBFrame.colbg[i]:SetSize(100,311)
+		BankItems_RBFrame.colbg[i]:SetTexture("Interface\\BankFrame\\Bank")
+		BankItems_RBFrame.colbg[i]:SetTexCoord(0.460938,0.851563,0,0.607422)
+		if i == 1 then
+			BankItems_RBFrame.colbg[i]:SetPoint("TOPLEFT", 15, -50)
+		else
+			BankItems_RBFrame.colbg[i]:SetPoint("TOPLEFT", BankItems_RBFrame.colbg[i-1], "TOPRIGHT", 3, 0)
+		end
+		BankItems_RBFrame.colShadow[i] = BankItems_RBFrame:CreateTexture(nil, "BACKGROUND")
+		BankItems_RBFrame.colShadow[i]:SetSize(118,329)
+		BankItems_RBFrame.colShadow[i]:SetTexture("Interface\\BankFrame\\Bank")
+		BankItems_RBFrame.colShadow[i]:SetTexCoord(0,0.460938,0,0.642578)
+		BankItems_RBFrame.colShadow[i]:SetPoint("CENTER", BankItems_RBFrame.colbg[i], "CENTER", 0, 0)
+	end
+
+	-- Info text
+	BankItems_RBFrame.infotext = BankItems_RBFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	BankItems_RBFrame.infotext:SetPoint("CENTER")
+	BankItems_RBFrame.infotext:SetWidth(500)
+
+	-- Create the 98 reagent bank buttons
+	for i = 1, NUM_REAGENTBANKGENERIC_SLOTS do
+		RBButtonAr[i] = CreateFrame("Button", nil, BankItems_RBFrame, "ItemButtonTemplate")
+		RBButtonAr[i]:SetID(i)
+		if i == 1 then
+			RBButtonAr[i]:SetPoint("TOPLEFT", 22, -53)
+		elseif i % 14 == 1 then
+			RBButtonAr[i]:SetPoint("TOPLEFT", RBButtonAr[i-7], "TOPRIGHT", 17, 0)
+		elseif i % 14 == 8 then
+			RBButtonAr[i]:SetPoint("TOPLEFT", RBButtonAr[i-7], "TOPRIGHT", 12, 0)
+		else
+			RBButtonAr[i]:SetPoint("TOPLEFT", RBButtonAr[i-1], "BOTTOMLEFT", 0, -7)
+		end
+	end
+	-- Create the quick search textbox
+	BankItems_RBFrame.Search = CreateFrame("EditBox", "BankItems_ReagentSearchBox", BankItems_RBFrame, "BagSearchBoxTemplate")
+	BankItems_RBFrame.Search:SetMaxLetters(15)
+	BankItems_RBFrame.Search:SetWidth(130)
+	BankItems_RBFrame.Search:SetHeight(20)
+	BankItems_RBFrame.Search:SetPoint("TOPRIGHT", BankItems_RBFrame, -20, -27)
+	tinsert(ITEM_SEARCHBAR_LIST, "BankItems_ReagentSearchBox")
+	
+	
+	--Void Storage - Based on Void Storage XML
+	-- Background Texture - Created from inherited template so we'll just modify it here
+	BankItems_VoidFrame.Bg:SetDrawLayer("BACKGROUND", 1)
+	BankItems_VoidFrame.Bg:SetTexture("Interface\\FrameGeneral\\UI-Background-Marble",true)
+	BankItems_VoidFrame.Bg:SetHorizTile(true)
+	BankItems_VoidFrame.Bg:SetVertTile(true)
+	-- Color background
+	BankItems_VoidFrame.bgTint = BankItems_VoidFrame:CreateTexture(nil, "BACKGROUND")
+	BankItems_VoidFrame.bgTint:SetDrawLayer("BACKGROUND", 2)
+	BankItems_VoidFrame.bgTint:SetAllPoints()
+	BankItems_VoidFrame.bgTint:SetPoint("TOPLEFT",2,-21)
+	BankItems_VoidFrame.bgTint:SetPoint("BOTTOMRIGHT",-2,2)
+	BankItems_VoidFrame.bgTint:SetTexture(0.302, 0.102, 0.204, 0.5)	
+			
+	-- Line Art background
+	BankItems_VoidFrame.lineArt = BankItems_VoidFrame:CreateTexture(nil, "BACKGROUND")
+	BankItems_VoidFrame.lineArt:SetDrawLayer("BACKGROUND", 3)
+	BankItems_VoidFrame.lineArt:SetPoint("TOPLEFT",2,-21)
+	BankItems_VoidFrame.lineArt:SetPoint("BOTTOMRIGHT",-2,2)
+	BankItems_VoidFrame.lineArt:SetTexture("Interface\\Transmogrify\\EtherealLines",true)
+	BankItems_VoidFrame.lineArt:SetHorizTile(true)
+	BankItems_VoidFrame.lineArt:SetVertTile(true)
+	BankItems_VoidFrame.lineArt:SetAlpha(0.3)
+
+	--TopLeft Corner Art
+	BankItems_VoidFrame.CornerTL = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.CornerTL:SetDrawLayer("BORDER", -2)
+	BankItems_VoidFrame.CornerTL:SetSize(64,64)
+	BankItems_VoidFrame.CornerTL:SetPoint("TOPLEFT", -2, -18)
+	BankItems_VoidFrame.CornerTL:SetTexture("Interface\\Transmogrify\\Textures")
+	BankItems_VoidFrame.CornerTL:SetTexCoord(0.00781250, 0.50781250, 0.00195313, 0.12695313)
+	--TopRight Corner Art
+	BankItems_VoidFrame.CornerTR = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.CornerTR:SetDrawLayer("BORDER", -2)
+	BankItems_VoidFrame.CornerTR:SetSize(64,64)
+	BankItems_VoidFrame.CornerTR:SetPoint("TOPRIGHT", 0, -18)
+	BankItems_VoidFrame.CornerTR:SetTexture("Interface\\Transmogrify\\Textures")
+	BankItems_VoidFrame.CornerTR:SetTexCoord(0.00781250, 0.50781250, 0.38476563, 0.50781250)
+	--BottomLeft Corner Art
+	BankItems_VoidFrame.CornerBL = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.CornerBL:SetDrawLayer("BORDER", -2)
+	BankItems_VoidFrame.CornerBL:SetSize(64,64)
+	BankItems_VoidFrame.CornerBL:SetPoint("BOTTOMLEFT", -2, -1)
+	BankItems_VoidFrame.CornerBL:SetTexture("Interface\\Transmogrify\\Textures")
+	BankItems_VoidFrame.CornerBL:SetTexCoord(0.00781250, 0.50781250, 0.25781250, 0.38085938)
+	--BottomRight Corner Art
+	BankItems_VoidFrame.CornerBR = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.CornerBR:SetDrawLayer("BORDER", -2)
+	BankItems_VoidFrame.CornerBR:SetSize(64,64)
+	BankItems_VoidFrame.CornerBR:SetPoint("BOTTOMRIGHT", 0, -1)
+	BankItems_VoidFrame.CornerBR:SetTexture("Interface\\Transmogrify\\Textures")
+	BankItems_VoidFrame.CornerBR:SetTexCoord(0.00781250, 0.50781250, 0.13085938, 0.25390625)
+	--Left Edge
+	BankItems_VoidFrame.LeftEdge = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.LeftEdge:SetDrawLayer("BORDER", -3)
+	BankItems_VoidFrame.LeftEdge:SetTexture("Interface\\Transmogrify\\VerticalTiles",true)
+	BankItems_VoidFrame.LeftEdge:SetSize(23,64)
+	BankItems_VoidFrame.LeftEdge:SetPoint("TOPLEFT", BankItems_VoidFrame.CornerTL, "BOTTOMLEFT", 3, 16)
+	BankItems_VoidFrame.LeftEdge:SetPoint("BOTTOMLEFT", BankItems_VoidFrame.CornerBL, "TOPLEFT", 3, -16)
+	BankItems_VoidFrame.LeftEdge:SetTexCoord(0.40625, 0.765625, 0, 1)
+	BankItems_VoidFrame.LeftEdge:SetVertTile(true)
+	--Right Edge
+	BankItems_VoidFrame.RightEdge = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.RightEdge:SetDrawLayer("BORDER", -3)
+	BankItems_VoidFrame.RightEdge:SetTexture("Interface\\Transmogrify\\VerticalTiles",true)
+	BankItems_VoidFrame.RightEdge:SetSize(23,64)
+	BankItems_VoidFrame.RightEdge:SetPoint("TOPRIGHT", BankItems_VoidFrame.CornerTR, "BOTTOMRIGHT", -3, 16)
+	BankItems_VoidFrame.RightEdge:SetPoint("BOTTOMRIGHT", BankItems_VoidFrame.CornerBR, "TOPRIGHT", -3, -16)
+	BankItems_VoidFrame.RightEdge:SetTexCoord(0.015625, 0.375, 0, 1)
+	BankItems_VoidFrame.RightEdge:SetVertTile(true)
+	--Bottom Edge
+	BankItems_VoidFrame.BottomEdge = BankItems_VoidFrame:CreateTexture(nil, "BORDER")
+	BankItems_VoidFrame.BottomEdge:SetDrawLayer("BORDER", -3)
+	BankItems_VoidFrame.BottomEdge:SetTexture("Interface\\Transmogrify\\HorizontalTiles",true)
+	BankItems_VoidFrame.BottomEdge:SetSize(64,23)
+	BankItems_VoidFrame.BottomEdge:SetPoint("BOTTOMLEFT", BankItems_VoidFrame.CornerBL, "BOTTOMRIGHT", -30, 4)
+	BankItems_VoidFrame.BottomEdge:SetPoint("BOTTOMRIGHT", BankItems_VoidFrame.CornerBR, "BOTTOMLEFT", 30, 4)
+	BankItems_VoidFrame.BottomEdge:SetTexCoord(0, 1, 0.015625, 0.375)
+	BankItems_VoidFrame.BottomEdge:SetHorizTile(true)
+	--Top Edge
+	BankItems_VoidFrame.TopEdge = BankItems_VoidFrame:CreateTexture(nil, "OVERLAY")
+	BankItems_VoidFrame.TopEdge:SetDrawLayer("OVERLAY", -1)
+	BankItems_VoidFrame.TopEdge:SetTexture("Interface\\Transmogrify\\HorizontalTiles",true)
+	BankItems_VoidFrame.TopEdge:SetSize(64,23)
+	BankItems_VoidFrame.TopEdge:SetPoint("TOPLEFT", 2, -3)
+	BankItems_VoidFrame.TopEdge:SetPoint("TOPRIGHT", -2, -3)
+	BankItems_VoidFrame.TopEdge:SetTexCoord(0, 1, 0.40625, 0.765625)
+	BankItems_VoidFrame.TopEdge:SetHorizTile(true)
+
+	-- Info text
+	BankItems_VoidFrame.infotext = BankItems_VoidFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	BankItems_VoidFrame.infotext:SetPoint("CENTER")
+	BankItems_VoidFrame.infotext:SetWidth(501)
+	
+	BankItems_VoidFrame.StorageFrame = CreateFrame("Frame", nil, BankItems_VoidFrame, "InsetFrameTemplate")
+	BankItems_VoidFrame.StorageFrame:SetPoint("TOPLEFT",34,-52)
+	BankItems_VoidFrame.StorageFrame:SetPoint("BOTTOMRIGHT",-36,38)
+	BankItems_VoidFrame.buttonsBG = BankItems_VoidFrame.StorageFrame:CreateTexture(nil, "BACKGROUND")
+	BankItems_VoidFrame.buttonsBG:SetDrawLayer("BACKGROUND", 0)
+	BankItems_VoidFrame.buttonsBG:SetAllPoints()
+	BankItems_VoidFrame.buttonsBG:SetTexture("Interface\\VoidStorage\\VoidStorage")
+	BankItems_VoidFrame.buttonsBG:SetTexCoord(0.00195313, 0.47265625, 0.16601563, 0.50781250)
+	-- Title text
+	BankItems_VoidFrame.title = BankItems_VoidFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	BankItems_VoidFrame.title:SetPoint("BOTTOMLEFT", BankItems_VoidFrame.StorageFrame, "TOPLEFT", 15, 5)
+	
+	-- Create the 80 void storage buttons
+	for i = 1, 80 do
+		VoidButtonAr[i] = CreateFrame("Button", nil, BankItems_VoidFrame.StorageFrame, "ItemButtonTemplate")
+		VoidButtonAr[i]:SetID(i)
+		VoidButtonAr[i].bg = VoidButtonAr[i]:CreateTexture(nil, "BACKGROUND")
+		VoidButtonAr[i].bg:SetSize(41,41)
+		VoidButtonAr[i].bg:SetPoint("CENTER")
+		VoidButtonAr[i].bg:SetTexture("Interface\\VoidStorage\\VoidStorage")
+		VoidButtonAr[i].bg:SetTexCoord(0.6640625, 0.74414063, 0.00195313, 0.08203125)
+		VoidButtonAr[i]:SetNormalTexture(nil)
+		if i == 1 then
+			VoidButtonAr[i]:SetPoint("TOPLEFT", 10, -8)
+		elseif  i % 8 == 1 then
+			if i % 16 == 1 then
+				VoidButtonAr[i]:SetPoint("TOPLEFT", VoidButtonAr[i-8], "TOPRIGHT", 14, 0);
+			else
+				VoidButtonAr[i]:SetPoint("TOPLEFT", VoidButtonAr[i-8], "TOPRIGHT", 7, 0);
+			end
+		else
+			VoidButtonAr[i]:SetPoint("TOPLEFT", VoidButtonAr[i-1], "BOTTOMLEFT", 0, -5);
+		end	
+	end
+	BankItems_VoidFrame.Line1 = BankItems_VoidFrame.StorageFrame:CreateTexture(nil, "ARTWORK")
+	BankItems_VoidFrame.Line1:SetSize(2,342)
+	BankItems_VoidFrame.Line1:SetTexture(0.1451, 0.0941, 0.1373, 0.8)
+	BankItems_VoidFrame.Line1:SetPoint("TOPLEFT", VoidButtonAr[9], "TOPRIGHT", 6, 6)
+	
+	BankItems_VoidFrame.Line2 = BankItems_VoidFrame.StorageFrame:CreateTexture(nil, "ARTWORK")
+	BankItems_VoidFrame.Line2:SetSize(2,342)
+	BankItems_VoidFrame.Line2:SetTexture(0.1451, 0.0941, 0.1373, 0.8)
+	BankItems_VoidFrame.Line2:SetPoint("TOPLEFT", VoidButtonAr[25], "TOPRIGHT", 6, 6)
+	
+	BankItems_VoidFrame.Line3 = BankItems_VoidFrame.StorageFrame:CreateTexture(nil, "ARTWORK")
+	BankItems_VoidFrame.Line3:SetSize(2,342)
+	BankItems_VoidFrame.Line3:SetTexture(0.1451, 0.0941, 0.1373, 0.8)
+	BankItems_VoidFrame.Line3:SetPoint("TOPLEFT", VoidButtonAr[41], "TOPRIGHT", 6, 6)
+	
+	BankItems_VoidFrame.Line4 = BankItems_VoidFrame.StorageFrame:CreateTexture(nil, "ARTWORK")
+	BankItems_VoidFrame.Line4:SetSize(2,342)
+	BankItems_VoidFrame.Line4:SetTexture(0.1451, 0.0941, 0.1373, 0.8)
+	BankItems_VoidFrame.Line4:SetPoint("TOPLEFT", VoidButtonAr[57], "TOPRIGHT", 6, 6)
+	
+	-- Create the quick search textbox
+	BankItems_VoidFrame.Search = CreateFrame("EditBox", "BankItems_VoidSearchBox", BankItems_VoidFrame.StorageFrame, "BagSearchBoxTemplate")
+	BankItems_VoidFrame.Search:SetMaxLetters(15)
+	BankItems_VoidFrame.Search:SetWidth(130)
+	BankItems_VoidFrame.Search:SetHeight(20)
+	BankItems_VoidFrame.Search:SetPoint("TOPRIGHT", BankItems_VoidFrame, -50, -28)
+	tinsert(ITEM_SEARCHBAR_LIST, "BankItems_VoidSearchBox")
+	
+	-- Create the tabs
+	for i = 1, VOID_STORAGE_PAGES do
+		VoidTabFrameAr[i] = CreateFrame("Frame", nil, BankItems_VoidFrame)
+		VoidTabFrameAr[i]:SetWidth(42)
+		VoidTabFrameAr[i]:SetHeight(50)
+		VoidTabFrameAr[i]:EnableMouse(true)
+		VoidTabFrameAr[i].bg = VoidTabFrameAr[i]:CreateTexture(nil, "BACKGROUND")
+		VoidTabFrameAr[i].bg:SetSize(64,64)
+		VoidTabFrameAr[i].bg:SetPoint("TOPLEFT")
+		VoidTabFrameAr[i].bg:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
+		VoidTabFrameAr[i].button = CreateFrame("CheckButton", nil, VoidTabFrameAr[i])
+		VoidTabFrameAr[i].button:SetID(i)
+		VoidTabFrameAr[i].button:SetWidth(36)
+		VoidTabFrameAr[i].button:SetHeight(34)
+		VoidTabFrameAr[i].button:SetPoint("TOPLEFT", 2, -8)
+		VoidTabFrameAr[i].button.texture = VoidTabFrameAr[i].button:CreateTexture(nil, "BORDER")
+		VoidTabFrameAr[i].button.texture:SetAllPoints()
+		VoidTabFrameAr[i].button.normaltexture = VoidTabFrameAr[i].button:CreateTexture()
+		VoidTabFrameAr[i].button.normaltexture:SetWidth(60)
+		VoidTabFrameAr[i].button.normaltexture:SetHeight(60)
+		VoidTabFrameAr[i].button.normaltexture:SetPoint("CENTER", 0, -1)
+		VoidTabFrameAr[i].button.normaltexture:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+		VoidTabFrameAr[i].button:SetNormalTexture(VoidTabFrameAr[i].button.normaltexture)
+		VoidTabFrameAr[i].button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+		VoidTabFrameAr[i].button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight")
+		VoidTabFrameAr[i].button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+		VoidTabFrameAr[i].searchOverlay = VoidTabFrameAr[i].button:CreateTexture(nil, "OVERLAY")
+		VoidTabFrameAr[i].searchOverlay:SetAllPoints()
+		VoidTabFrameAr[i].searchOverlay:SetTexture(0,0,0,0.8)
+		VoidTabFrameAr[i].showOverlay = false
+		if i == 1 then
+			VoidTabFrameAr[i]:SetPoint("TOPLEFT", BankItems_VoidFrame, "TOPRIGHT", -1, -32)
+			VoidTabFrameAr[i].button.texture:SetTexture("Interface\\Icons\\INV_Enchant_EssenceCosmicGreater")
+		else
+			VoidTabFrameAr[i]:SetPoint("TOPLEFT", VoidTabFrameAr[i-1], "BOTTOMLEFT", 0, 0)
+			VoidTabFrameAr[i].button.texture:SetTexture("Interface\\Icons\\INV_Enchant_EssenceArcaneLarge")
+		end
+	end
+	
 	-------------------------------------------------
 	-- Set scripts of the various widgets
 	-- The 28 main bank buttons (NUM_BANKGENERIC_SLOTS == 28)
@@ -2114,7 +2560,7 @@ function BankItems_CreateFrames()
 
 	-- The Void Bag next button
 	BankItems_NextVoidButton:SetScript("OnClick", function(self)
-		if voidPage * voidPageSize < #bankPlayer.Bag104 then
+		if voidPage * voidPageSize < #slotAdjust[104] then
 			voidPage = voidPage + 1
 			BankItems_PopulateBag(104)
 		end
@@ -2129,7 +2575,7 @@ function BankItems_CreateFrames()
 
 	-- The Reagent Bag next button
 	BankItems_NextReagentButton:SetScript("OnClick", function(self)
-		if reagentBankPage * reagentBankPageSize < #bankPlayer.Bag105 then
+		if reagentBankPage * reagentBankPageSize < #slotAdjust[105] then --use list of valid items for size since full table has nil entries now
 			reagentBankPage = reagentBankPage + 1
 			BankItems_PopulateBag(105)
 		end
@@ -2168,6 +2614,41 @@ function BankItems_CreateFrames()
 		for _, i in ipairs(BAGNUMBERS) do
 			BagContainerAr[i]:SetScale(BankItems_Save.Scale / 100)
 			BagContainerAr[i]:SetAlpha(BankItems_Save.Transparency / 100)
+		end
+	end
+
+	--Reagent Bank Frame Button Scripts
+	for i = 1, 98 do
+		RBButtonAr[i]:SetScript("OnLeave", BankItems_Button_OnLeave)
+		RBButtonAr[i]:SetScript("OnEnter", BankItems_ReagentBankItem_OnEnter)
+		RBButtonAr[i]:SetScript("OnClick", BankItems_ReagentBankItem_OnClick)
+	end
+
+	--Void Storage Frame Button/Tab Scripts
+	for i = 1, 2 do
+		VoidTabFrameAr[i].button:SetScript("OnClick", BankItems_VoidTabButton_OnClick)
+	end
+	for i = 1, 80 do
+		VoidButtonAr[i]:SetScript("OnLeave", BankItems_Button_OnLeave)
+		VoidButtonAr[i]:SetScript("OnEnter", BankItems_VoidStorageItem_OnEnter)
+		VoidButtonAr[i]:SetScript("OnClick", BankItems_VoidStorageItem_OnClick)
+	end
+
+	--Setup slot adjustment table for bag view mode of void storage and reagent bank
+	local validCount = 0
+	for i = 1, (VOID_STORAGE_PAGES*VOID_STORAGE_MAX) do
+		slotAdjust[104][i] = nil
+		if bankPlayer.Bag104 and bankPlayer.Bag104[i] then
+			validCount = validCount + 1
+			slotAdjust[104][validCount] = i
+		end
+	end
+	validCount = 0
+	for i = 1, NUM_REAGENTBANKGENERIC_SLOTS do
+		slotAdjust[105][i] = nil
+		if bankPlayer.Bag105 and bankPlayer.Bag105[i] then
+			validCount = validCount + 1
+			slotAdjust[105][validCount] = i
 		end
 	end
 
@@ -2479,10 +2960,10 @@ function BankItems_UpgradeDataToPanda()
 	BankItems_Save.Upgraded = 5
 end
 
-function BankItems_SlashHandler(msg)
+function BankItems_SlashHandler(message)
 	BankItems_CreateFrames()
-
-	msg = strtrim(strlower(msg or ""))
+	message = strtrim(message or "") -- need original case message data for some commands
+	local msg = strlower(message)
 	local allBags
 
 	if msg == "showbutton" then
@@ -2536,26 +3017,27 @@ function BankItems_SlashHandler(msg)
 		allBags = BankItems_Save.Behavior
 	else
 		-- Open the bank of specified character
+		local p1, p2, p3, p4
 		if strfind(msg, "open (.*)") then
-			local selfPlayerRealm = strtrim(GetRealmName())
-			local p1, p2 = strmatch(msg, "open (.)(.*)")
-			if not p1 or not p2 then return end  -- names are at least 2 chars long
-			local playerName = strupper(p1)..p2.."|"..selfPlayerRealm
+			p1, p2 = strmatch(msg, "open (.)(.*)")
+		else
+			p1, p2 = strmatch(msg, "(.)(.*)")
+		end
+		if p1 and p2 ~= "" then -- names are at least 2 chars long, second () set returns "" if p1 isn't nil
+			message = message:gsub("||","-") -- character name given with char|realm format used by BankItems - using message since realm names can have more than one capital letter
+			p3 = strfind(msg, p1)
+			p4 = strfind(message, "-") -- character name given with realm
+			local playerName = strupper(p1)..p2
+			if p4 then -- realm name given
+				p1, p2 = strmatch(strsub(message, p4+1), "(.)(.*)") -- correct first letter of realm name not being capitalized but won't work if past the first case mistake
+				playerName = strsub(playerName, 1, p4-p3).."|"..strupper(p1)..p2
+			else
+				playerName = playerName.."|"..selfPlayerRealm
+			end
 			if BankItems_Save[playerName] then
 				ShowUIPanel(BankItems_Frame)
 				BankItems_UserDropdown_OnClick(nil, playerName)
-			end
-			return
-		else
-			local selfPlayerRealm = strtrim(GetRealmName())
-			local p1, p2 = strmatch(msg, "(.)(.*)")
-			if p1 and p2 then  -- names are at least 2 chars long
-				local playerName = strupper(p1)..p2.."|"..selfPlayerRealm
-				if BankItems_Save[playerName] then
-					ShowUIPanel(BankItems_Frame)
-					BankItems_UserDropdown_OnClick(nil, playerName)
-					return
-				end
+				return
 			end
 		end
 
@@ -2579,6 +3061,15 @@ function BankItems_SlashHandler(msg)
 
 	if BankItems_Frame:IsVisible() then
 		HideUIPanel(BankItems_Frame)
+		if BankItems_GBFrame:IsVisible() then
+			HideUIPanel(BankItems_GBFrame)
+		end
+		if BankItems_VoidFrame:IsVisible() then
+			HideUIPanel(BankItems_VoidFrame)
+		end
+		if BankItems_RBFrame:IsVisible()  then
+			HideUIPanel(BankItems_RBFrame)
+		end
 	else
 		ShowUIPanel(BankItems_Frame)
 		if allBags == 3 then
@@ -2623,6 +3114,29 @@ function BankItems_Initialize2()
 	BankItems_GBFrame:SetHeight(444)
 	BankItems_GBFrame:SetPoint(BankItems_Save.GBpospoint, nil, BankItems_Save.GBposrelpoint, BankItems_Save.GBposoffsetx, BankItems_Save.GBposoffsety)
 	BankItems_GBFrame:SetUserPlaced(nil)
+
+	if not BankItems_Save.RBpospoint then
+		BankItems_Save.RBpospoint = "TOPLEFT"
+		BankItems_Save.RBposrelpoint = "TOPLEFT"
+		BankItems_Save.RBposoffsetx = 50
+		BankItems_Save.RBposoffsety = -104
+	end
+	BankItems_RBFrame:ClearAllPoints()
+	BankItems_RBFrame:SetWidth(748)
+	BankItems_RBFrame:SetHeight(376)
+	BankItems_RBFrame:SetPoint(BankItems_Save.RBpospoint, nil, BankItems_Save.RBposrelpoint, BankItems_Save.RBposoffsetx, BankItems_Save.RBposoffsety)
+	BankItems_RBFrame:SetUserPlaced(nil)
+	
+	if not BankItems_Save.Voidpospoint then
+		BankItems_Save.Voidpospoint = "TOPLEFT"
+		BankItems_Save.Voidposrelpoint = "TOPLEFT"
+		BankItems_Save.Voidposoffsetx = 50
+		BankItems_Save.Voidposoffsety = -104
+	end
+	BankItems_VoidFrame:ClearAllPoints()
+	BankItems_VoidFrame:SetSize(551,436)
+	BankItems_VoidFrame:SetPoint(BankItems_Save.Voidpospoint, nil, BankItems_Save.Voidposrelpoint, BankItems_Save.Voidposoffsetx, BankItems_Save.Voidposoffsety)
+	BankItems_VoidFrame:SetUserPlaced(nil)
 
 	-- Upgrade behavior
 	if type(BankItems_Save.Behavior) == "number" then
@@ -2674,6 +3188,10 @@ function BankItems_Initialize2()
 			OnClick = function(clickedframe, button)
 				if IsShiftKeyDown() then
 					BankItems_DisplayGuildBank()
+				elseif IsAltKeyDown() then
+					BankItems_DisplayReagentBank()
+				elseif IsControlKeyDown() then
+					BankItems_DisplayVoidStorage()
 				else
 					BankItems_SlashHandler()
 				end
@@ -2696,8 +3214,10 @@ function BankItems_Initialize2()
 				delTable(t)
 				tt:AddLine(" ")
 				tt:AddDoubleLine("|cffffff00"..L["Total"], "|cffffffff"..BankItems_GetCoinTextureString(total))
-				tt:AddLine(L["|cffeda55fClick|r to toggle BankItems"])
-				tt:AddLine(L["|cffeda55fShift-Click|r to toggle BankItems Guild Bank"])
+				tt:AddLine(L["|cffeda55fClick|r to toggle BankItems"]);
+				tt:AddLine(string.format(L["|cffeda55fShift-Click|r to toggle BankItems %s"], GUILD_BANK));
+				tt:AddLine(string.format(L["|cffeda55fCtrl-Click|r to toggle BankItems %s"], VOID_STORAGE));
+				tt:AddLine(string.format(L["|cffeda55fAlt-Click|r to toggle BankItems %s"], REAGENT_BANK));
 			end,
 		})
 	end
@@ -2786,7 +3306,7 @@ function BankItems_SaveItems()
 				selfPlayer[num] = delTable(selfPlayer[num])
 			end
 		end;
-		
+
 		--Read the contents of each bank bag (bagId = 5..11)
 		--ITEM_INVENTORY_BANK_BAG_OFFSET+1 = 5
 		--ITEM_INVENTORY_BANK_BAG_OFFSET+NUM_BANKBAGSLOTS = 11
@@ -2816,9 +3336,9 @@ function BankItems_SaveItems()
 			end
 		end
 	end;
-	
+
 	BankItems_SaveReagentBank();
-	
+
 	if BankItems_Frame:IsVisible() and bankPlayer == selfPlayer then
 		BankItems_PopulateFrame()
 		for i = 5, 11 do
@@ -2985,6 +3505,7 @@ end
 function BankItems_SaveCurrency()
 	local name, isHeader, isExpanded, isUnused, isWatched, count, icon
 	local j = 0
+	local itemPointer
 
 	-- Save currency items as bag 102
 	selfPlayer.Bag102 = selfPlayer.Bag102 or newTable()
@@ -3019,7 +3540,7 @@ function BankItems_SaveVoidStorage()
 	end
 	local itemID, textureName, locked, recentDeposit, isFiltered
 	local itemPointer
-	local j = 0
+	local j, slot, validCount = 0, 0, 0
 	local i
 	local k; --k-th void storage tab
 
@@ -3027,33 +3548,47 @@ function BankItems_SaveVoidStorage()
 	selfPlayer.Bag104 = selfPlayer.Bag104 or newTable();
 --	if selfPlayer.Bag104 then delTable(selfPlayer.Bag104) end
 --	selfPlayer.Bag104 = newTable()
-		
-	selfPlayer.Bag104.icon = ICON_VoidStorage; 
+
+	selfPlayer.Bag104.icon = ICON_VoidStorage;
 
 	--for each void storage tab
-	for k = 1, 2 do
+	for k = 1, VOID_STORAGE_PAGES do
 		for i = 1, 80 do
+			slot = slot + 1 --increment slots as we go
+			slotAdjust[104][slot] = nil
 			itemID, textureName, locked, recentDeposit, isFiltered = GetVoidItemInfo(k, i)
 			if itemID and textureName and textureName ~= "" then
-				j = j + 1
-				selfPlayer.Bag104[j] = selfPlayer.Bag104[j] or newTable()
+				j = slot --last occupied slot found
+				validCount = validCount + 1 --total number of valid items found
+				slotAdjust[104][validCount] = slot
+				selfPlayer.Bag104[slot] = selfPlayer.Bag104[slot] or newTable()
 				local _, link = GetItemInfo(itemID)
-				itemPointer = selfPlayer.Bag104[j]
+				itemPointer = selfPlayer.Bag104[slot]
 				itemPointer.link = link
 				itemPointer.icon = textureName
+			else --need empty slot data available for new void storage container layout to be accurate
+				selfPlayer.Bag104[slot] = delTable(selfPlayer.Bag104[slot])
 			end
 		end
 	end
-	-- j is last item
+	-- j is last occupied slot
+	--removed table deletion loop since empty slot tables are deleted in the main loop now
 
-	for i = #selfPlayer.Bag104, j + 1, -1 do
-		delTable(tremove(selfPlayer.Bag104))
+	selfPlayer.Bag104.size = min(max(4, validCount + validCount % 2), voidPageSize) -- Size of Void Bag is min 4, max voidPageSize, multiple of 2
+	selfPlayer.Bag104.realSize = j
+	--make sure you don't get stuck on an unused page with no paging buttons
+	slot = max(ceil(j/selfPlayer.Bag104.size), 1)
+	if voidPage > slot then
+		voidPage = slot --swap pages if items are removed and new max page number is below current page
 	end
-
-	selfPlayer.Bag104.size = min(max(4, j + j % 2), voidPageSize) -- Size of Void Bag is min 4, max voidPageSize, multiple of 2
-	if bankPlayer == selfPlayer and BagContainerAr[104] and BagContainerAr[104]:IsVisible() then
-		BagContainerAr[104]:Hide()
-		BagButtonAr[104]:Click()
+	--update open bag/container
+	if bankPlayer == selfPlayer then
+		if BankItems_VoidFrame and BankItems_VoidFrame:IsVisible() then --new void storage frame is open
+			BankItems_PopulateVoidStorage(BankItems_VoidFrame.currentTab) --force contents to update without hiding
+		elseif BagContainerAr[104] and BagContainerAr[104]:IsVisible() then --old void storage bag is open
+			BagContainerAr[104]:Hide()
+			BagButtonAr[104]:Click()
+		end
 	end
 end
 
@@ -3069,37 +3604,50 @@ function BankItems_SaveReagentBank()
 	selfPlayer.Bag105 = selfPlayer.Bag105 or newTable();
 	selfPlayer.Bag105.icon = ICON_ReagentBank
 
-	local j = 0;
+	local j, validCount = 0, 0;
 	local itemPointer;
 
 	for slot = 1, NUM_REAGENTBANKGENERIC_SLOTS do
 		local texture, count, locked, quality, readable, lootable, link = GetContainerItemInfo(REAGENTBANK_CONTAINER, slot)
+		slotAdjust[105][slot] = nil
 		if link then
-			j = j + 1
+			j = slot --last occupied slot found
+			validCount = validCount + 1 --total number of valid items found
+			slotAdjust[105][validCount] = slot
 			--print(link);
-			selfPlayer.Bag105[j] = selfPlayer.Bag105[j] or newTable()
-			itemPointer = selfPlayer.Bag105[j]
+			selfPlayer.Bag105[slot] = selfPlayer.Bag105[slot] or newTable()
+			itemPointer = selfPlayer.Bag105[slot]
 			itemPointer.count = count and count > 1 and count or nil; -- fixed to proper item count in reagent bank
 			itemPointer.link = link
 			itemPointer.icon = texture
+		else --need empty slot data available for new reagent bank container layout to be accurate
+			selfPlayer.Bag105[slot] = delTable(selfPlayer.Bag105[slot])
 		end;
 	end;
 
-	-- j is last item
+	-- j is last occupied slot
+	--removed table deletion loop since empty slot tables are deleted in the main loop now
 
-	for i = #selfPlayer.Bag105, j + 1, -1 do
-		delTable(tremove(selfPlayer.Bag105))
-	end;
-	
-	selfPlayer.Bag105.size = min(max(4, j + j % 2), reagentBankPageSize);
-	if bankPlayer == selfPlayer and BagContainerAr[105] and BagContainerAr[105]:IsVisible() then
-		BagContainerAr[105]:Hide()
-		BagButtonAr[105]:Click()
+	selfPlayer.Bag105.size = min(max(4, validCount + validCount % 2), reagentBankPageSize);
+	selfPlayer.Bag105.realSize = j
+	--make sure you don't get stuck on an unused page with no paging buttons
+	local slot = max(ceil(j/selfPlayer.Bag105.size), 1)
+	if reagentBankPage > slot then
+		reagentBankPage = slot 
+	end
+	--update open bag/container
+	if bankPlayer == selfPlayer then
+		if BankItems_RBFrame and BankItems_RBFrame:IsVisible() then --new reagent bank frame is open
+			BankItems_PopulateReagentBank() --force contents to update without hiding
+		elseif BagContainerAr[105] and BagContainerAr[105]:IsVisible() then --old reagent bank bag is open
+			BagContainerAr[105]:Hide()
+			BagButtonAr[105]:Click()
+		end
 	end
 end;
 
 function BankItems_SaveAuctions()
-	local name, texture, count, quality, canUse, level, levelColHeader, minBid, minIncrement, buyoutPrice, bidAmount, highBidder, owner, saleStatus, itemId, hasAllInfo
+	local name, texture, count, quality, canUse, level, levelColHeader, minBid, minIncrement, buyoutPrice, bidAmount, highBidder, bidderFullName, owner, ownerFullName, saleStatus, itemId, hasAllInfo
 	local itemPointer
 	local numBatchAuctions, totalAuctions = GetNumAuctionItems("owner")
 	local j = 0
@@ -3110,7 +3658,7 @@ function BankItems_SaveAuctions()
 	selfPlayer.Bag103.time = time()
 
 	for i = 1, totalAuctions do
-		name, texture, count, quality, canUse, level, levelColHeader, minBid, minIncrement, buyoutPrice, bidAmount, highBidder, owner, saleStatus, itemId, hasAllInfo = GetAuctionItemInfo("owner", i)
+		name, texture, count, quality, canUse, level, levelColHeader, minBid, minIncrement, buyoutPrice, bidAmount, highBidder, bidderFullName, owner, ownerFullName, saleStatus, itemId, hasAllInfo = GetAuctionItemInfo("owner", i)
 		if name and saleStatus ~= 1 then
 			j = j + 1
 			selfPlayer.Bag103[j] = selfPlayer.Bag103[j] or newTable()
@@ -3162,12 +3710,28 @@ function BankItems_OpenBagsByBehavior(bank, inv, equip, mail, currency, auction,
 		BagButtonAr[103]:Click()
 	end
 	if void then
-		BagContainerAr[104]:Hide()
-		BagButtonAr[104]:Click()
+		if BankItems_Save.voidBags then --old void bag method
+			BagContainerAr[104]:Hide()
+			BagButtonAr[104]:Click()
+		else --new Void Storage Frame
+			if BankItems_VoidFrame:IsVisible() then
+				BankItems_PopulateVoidStorage(BankItems_VoidFrame.currentTab)
+			else
+				ShowUIPanel(BankItems_VoidFrame)
+			end
+		end
 	end
 	if reagent then
-		BagContainerAr[105]:Hide()
-		BagButtonAr[105]:Click()
+		if BankItems_Save.reagentBags then --old reagent bag method
+			BagContainerAr[105]:Hide()
+			BagButtonAr[105]:Click()
+		else --new Reagent Bank Frame
+			if BankItems_RBFrame:IsVisible() then
+				BankItems_PopulateReagentBank()
+			else
+				ShowUIPanel(BankItems_RBFrame)
+			end
+		end
 	end
 end
 
@@ -3195,19 +3759,27 @@ function BankItems_PopulateFrame()
 	-- 28 bank slots (NUM_BANKGENERIC_SLOTS == 28)
 	for i = 1, NUM_BANKGENERIC_SLOTS do
 		if bankPlayer[i] then
-			local quality = select(3, GetItemInfo(bankPlayer[i].link))
+			local quality
+			if bankPlayer[i].link:find("battlepet") then
+				local _, speciesID, _, breedQuality, _, _, _, _ = strsplit(":", bankPlayer[i].link)
+				local _, peticon, _ = GetPetInfoBySpeciesID(speciesID);
+				quality = tonumber(breedQuality)
+				ItemButtonAr[i].icon:SetTexture(peticon)
+			else
+				quality = select(3, GetItemInfo(bankPlayer[i].link))
+				ItemButtonAr[i].icon:SetTexture(GetItemIcon(bankPlayer[i].link))
+			end
 			if quality and (quality >= LE_ITEM_QUALITY_COMMON and BAG_ITEM_QUALITY_COLORS[quality]) then
 				ItemButtonAr[i].IconBorder:Show()
 				ItemButtonAr[i].IconBorder:SetVertexColor(BAG_ITEM_QUALITY_COLORS[quality].r, BAG_ITEM_QUALITY_COLORS[quality].g, BAG_ITEM_QUALITY_COLORS[quality].b)
 			else
 				ItemButtonAr[i].IconBorder:Hide()
 			end
-			ItemButtonAr[i].texture:SetTexture(GetItemIcon(bankPlayer[i].link))
 			if bankPlayer[i].count then
-				ItemButtonAr[i].count:Show()
-				ItemButtonAr[i].count:SetText(bankPlayer[i].count)
+				ItemButtonAr[i].Count:Show()
+				ItemButtonAr[i].Count:SetText(bankPlayer[i].count)
 			else
-				ItemButtonAr[i].count:Hide()
+				ItemButtonAr[i].Count:Hide()
 			end
 			if filterSearchText == "" or filterSearchText == SEARCH then
 				ItemButtonAr[i].searchOverlay:Hide()
@@ -3221,8 +3793,8 @@ function BankItems_PopulateFrame()
 				end
 			end
 		else
-			ItemButtonAr[i].texture:SetTexture()
-			ItemButtonAr[i].count:Hide()
+			ItemButtonAr[i].icon:SetTexture()
+			ItemButtonAr[i].Count:Hide()
 			ItemButtonAr[i].IconBorder:Hide()
 			ItemButtonAr[i].searchOverlay:Hide()
 		end
@@ -3230,48 +3802,50 @@ function BankItems_PopulateFrame()
 	-- 12 bag slots
 	for i = 0, 11 do
 		if i == 0 then
-			BagButtonAr[0].texture:SetTexture("Interface\\Buttons\\Button-Backpack-Up")
-			BagButtonAr[0].texture:SetVertexColor(1, 1, 1)
+			BagButtonAr[0].icon:SetTexture("Interface\\Buttons\\Button-Backpack-Up")
+			BagButtonAr[0].icon:SetVertexColor(1, 1, 1)
 		elseif bankPlayer[format("Bag%d", i)] and bankPlayer[format("Bag%d", i)].link then
-			BagButtonAr[i].texture:SetTexture(GetItemIcon(bankPlayer[format("Bag%d", i)].link))
-			BagButtonAr[i].texture:SetVertexColor(1, 1, 1)
+			BagButtonAr[i].icon:SetTexture(GetItemIcon(bankPlayer[format("Bag%d", i)].link))
+			BagButtonAr[i].icon:SetVertexColor(1, 1, 1)
 		else
-			BagButtonAr[i].texture:SetTexture("Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag")
+			BagButtonAr[i].icon:SetTexture("Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag")
 			if i >= 5 then
 				if bankPlayer["NumBankSlots"] and (i - 4) <= bankPlayer["NumBankSlots"] then
-					BagButtonAr[i].texture:SetVertexColor(1, 1, 1)
+					BagButtonAr[i].icon:SetVertexColor(1, 1, 1)
 				else
-					BagButtonAr[i].texture:SetVertexColor(1, 0.1, 0.1)
+					BagButtonAr[i].icon:SetVertexColor(1, 0.1, 0.1)
 				end
 			else
-				BagButtonAr[i].texture:SetVertexColor(1, 1, 1)
+				BagButtonAr[i].icon:SetVertexColor(1, 1, 1)
 			end
 		end
 		BagButtonAr[i]:Show()
 	end
+	BankItems_FilterBags()
+	
 	-- Equipped items
-	BagButtonAr[100].texture:SetTexture(ICON_Equipped_Items)
-	BagButtonAr[100].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[100].icon:SetTexture(ICON_Equipped_Items)
+	BagButtonAr[100].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[100]:Show()
 	-- Mail items
-	BagButtonAr[101].texture:SetTexture(ICON_Mailbox)
-	BagButtonAr[101].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[101].icon:SetTexture(ICON_Mailbox)
+	BagButtonAr[101].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[101]:Show()
 	-- Currency Items
-	BagButtonAr[102].texture:SetTexture(ICON_Currency)
-	BagButtonAr[102].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[102].icon:SetTexture(ICON_Currency)
+	BagButtonAr[102].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[102]:Show()
 	-- Void Storage
-	BagButtonAr[104].texture:SetTexture(ICON_VoidStorage)
-	BagButtonAr[104].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[104].icon:SetTexture(ICON_VoidStorage)
+	BagButtonAr[104].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[104]:Show()
 	-- AH Bag
-	BagButtonAr[103].texture:SetTexture(ICON_AuctionHouse)
-	BagButtonAr[103].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[103].icon:SetTexture(ICON_AuctionHouse)
+	BagButtonAr[103].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[103]:Show()
 	-- Reagent Bag  icon by Mornadan
-	BagButtonAr[105].texture:SetTexture(ICON_ReagentBank)
-	BagButtonAr[105].texture:SetVertexColor(1, 1, 1)
+	BagButtonAr[105].icon:SetTexture(ICON_ReagentBank)
+	BagButtonAr[105].icon:SetVertexColor(1, 1, 1)
 	BagButtonAr[105]:Show()
 	-- Money
 	BankItems_UpdateMoney()
@@ -3314,10 +3888,11 @@ function BankItems_PopulateBag(bagID)
 					BankItems_NextAHButton:Hide()
 					BankItems_PrevAHButton:Hide()
 				end
-			elseif (bagID == 104) then -- Adjust for page number
+			elseif bagID == 104 then -- Adjust for page number
 				idx = idx + (voidPage - 1) * voidPageSize
-				BagContainerAr[104].mailtext:SetText(((voidPage - 1) * voidPageSize + 1).."-"..min(voidPage * voidPageSize, #bankPlayer.Bag104).."/"..#bankPlayer.Bag104)
-				if #bankPlayer.Bag104 >= voidPageSize then
+				idx = slotAdjust[104][idx]
+				BagContainerAr[104].mailtext:SetText(((voidPage - 1) * voidPageSize + 1).."-"..min(voidPage * voidPageSize, #slotAdjust[104]).."/"..#slotAdjust[104])
+				if #slotAdjust[104] >= voidPageSize then
 					BagContainerAr[104].mailtext:Show()
 					BankItems_NextVoidButton:Show()
 					BankItems_PrevVoidButton:Show()
@@ -3326,10 +3901,11 @@ function BankItems_PopulateBag(bagID)
 					BankItems_NextVoidButton:Hide()
 					BankItems_PrevVoidButton:Hide()
 				end
-			elseif (bagID == 105) then -- Adjust for page number
+			elseif bagID == 105 then -- Adjust for page number
 				idx = idx + (reagentBankPage - 1) * reagentBankPageSize
-				BagContainerAr[105].mailtext:SetText(((reagentBankPage - 1) * reagentBankPageSize + 1).."-"..min(reagentBankPage * reagentBankPageSize, #bankPlayer.Bag105).."/"..#bankPlayer.Bag105)
-				if #bankPlayer.Bag105 >= reagentBankPageSize then
+				idx = slotAdjust[105][idx]
+				BagContainerAr[105].mailtext:SetText(((reagentBankPage - 1) * reagentBankPageSize + 1).."-"..min(reagentBankPage * reagentBankPageSize, #slotAdjust[105]).."/"..#slotAdjust[105])
+				if #slotAdjust[105] >= reagentBankPageSize then
 					BagContainerAr[105].mailtext:Show()
 					BankItems_NextReagentButton:Show()
 					BankItems_PrevReagentButton:Show()
@@ -3340,33 +3916,43 @@ function BankItems_PopulateBag(bagID)
 				end
 			end
 			if theBag[idx] then
+				local link = theBag[idx].link
 				if bagID == 102 then
-					button.texture:SetTexture(theBag[idx].icon)
-				elseif type(theBag[idx].link) == "number" then
-					--button.texture:SetTexture(theBag[idx].icon)
-					button.texture:SetTexture(GetCoinIcon(theBag[idx].link))
+					button.icon:SetTexture(theBag[idx].icon)
+				elseif type(link) == "number" then
+					--button.icon:SetTexture(theBag[idx].icon)
+					button.icon:SetTexture(GetCoinIcon(link))
 				else
-					local quality = select(3, GetItemInfo(theBag[idx].link))
+					local quality
+					if link:find("battlepet") then
+						local _, speciesID, _, breedQuality, _, _, _, _ = strsplit(":", link)
+						local _, peticon, _ = GetPetInfoBySpeciesID(speciesID);
+						quality = tonumber(breedQuality)
+						button.icon:SetTexture(peticon)
+					else
+						quality = select(3, GetItemInfo(link))
+						button.icon:SetTexture(GetItemIcon(link))
+					end
 					if quality and (quality >= LE_ITEM_QUALITY_COMMON and BAG_ITEM_QUALITY_COLORS[quality]) then
 						button.IconBorder:Show()
 						button.IconBorder:SetVertexColor(BAG_ITEM_QUALITY_COLORS[quality].r, BAG_ITEM_QUALITY_COLORS[quality].g, BAG_ITEM_QUALITY_COLORS[quality].b)
 					else
 						button.IconBorder:Hide()
 					end
-					button.texture:SetTexture(GetItemIcon(theBag[idx].link))
 				end
 				if theBag[idx].count then
-					button.count:Show()
-					button.count:SetText(theBag[idx].count)
+					button.Count:Show()
+					button.Count:SetText(theBag[idx].count)
 				else
-					button.count:Hide()
+					button.Count:Hide()
 				end
 				if filterSearchText == "" or filterSearchText == SEARCH then
 					button.searchOverlay:Hide()
-				elseif type(theBag[idx].link) == "string" then
-					local itemName, itemLink, itemRarity, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture = GetItemInfo(theBag[idx].link)
-					local temp = strmatch(theBag[idx].link, "%[(.*)%]")
-					if strfind(strlower(temp), filterSearchText, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(strlower(_G[itemEquipLoc]), filterSearchText, 1, true)) then
+				elseif type(link) == "string" then
+					local itemName, itemLink, itemRarity, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture = GetItemInfo(link)
+					local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(link, "%[(.*)%]")))
+					local filterlocalized=BankItems_SpecialCharactersLocalization(strlower(filterSearchText))
+					if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
 						button.searchOverlay:Hide()
 					else
 						button.searchOverlay:Show()
@@ -3381,11 +3967,11 @@ function BankItems_PopulateBag(bagID)
 						idx = 19
 					end
 					_, textureName = GetInventorySlotInfo(BANKITEMS_INVSLOT[idx])
-					button.texture:SetTexture(textureName)
+					button.icon:SetTexture(textureName)
 				else
-					button.texture:SetTexture()
+					button.icon:SetTexture()
 				end
-				button.count:Hide()
+				button.Count:Hide()
 				button.IconBorder:Hide()
 				button.searchOverlay:Hide()
 			end
@@ -3399,36 +3985,169 @@ function SetItemSearch(text, ...)
 	filterSearchText = strlower(text)
 	return Orig_SetItemSearch(text, ...)
 end
+
+--Remove accents to make filter not accent sensitive like Blizzard UI search and filters
+local accentedChars = {"à","á","â","ã","ä","å","æ","ç","è","é","ê","ë","ì","í","î","ï","ñ","ò","ó","ô","õ","ö","ø","ù","ú","û","ü","ý","ÿ","œ","š","ž","ƒ"}
+local standardChars = {"a","a","a","a","a","a","ae","c","e","e","e","e","i","i","i","i","n","o","o","o","o","o","o","u","u","u","u","y","y","oe","s","z","f"}
+function BankItems_SpecialCharactersLocalization(text)
+	for char = 1, #accentedChars do
+		if strfind(text, accentedChars[char]) then
+			text = gsub(text, accentedChars[char], standardChars[char])
+		end
+	end
+	return text
+end
+
 function BankItems_FilterBags()
-	if not BankItems_Frame:IsVisible() then return end
+	if not BankItems_Frame:IsVisible() and not BankItems_RBFrame:IsVisible() and not BankItems_VoidFrame:IsVisible() and not BankItems_GBFrame:IsVisible() then return end
 
 	if filterSearchText == "" or filterSearchText == SEARCH then
 		for num = 1, NUM_BANKGENERIC_SLOTS do
 			ItemButtonAr[num].searchOverlay:Hide()
 		end
+		for num = 1, NUM_REAGENTBANKGENERIC_SLOTS do --reagent bank
+			RBButtonAr[num].searchOverlay:Hide()
+		end
+		for num = 1, VOID_STORAGE_MAX do --void storage
+			VoidButtonAr[num].searchOverlay:Hide()
+		end
+		for num = 1, 98 do --guild bank
+			GBButtonAr[num].searchOverlay:Hide()
+		end
 		for _, bagID in ipairs(BAGNUMBERS) do
 			local theBag = bankPlayer[format("Bag%d", bagID)]
-			if theBag then
+			if theBag and (bagID ~= 105 or BankItems_Save.reagentBags) and (bagID ~= 104 or BankItems_Save.voidBags) then --skip Reagent and Void Storage bags unless option to show as a bag is set
 				for bagItem = 1, theBag.size do
 					BagContainerAr[bagID][bagItem].searchOverlay:Hide()
 				end
 			end
+			BagButtonAr[bagID].searchOverlay:Hide()
+			BagButtonAr[bagID].showOverlay = false
+		end
+		for num = 1, VOID_STORAGE_PAGES do
+			VoidTabFrameAr[num].showOverlay = false
+			VoidTabFrameAr[num].searchOverlay:Hide()
+		end
+		for num = 1, 8 do
+			GBTabFrameAr[num].showOverlay = false
+			GBTabFrameAr[num].searchOverlay:Hide()
 		end
 	else
+		local filterlocalized=BankItems_SpecialCharactersLocalization(strlower(filterSearchText))
 		for num = 1, NUM_BANKGENERIC_SLOTS do
 			if bankPlayer[num] then
-				local itemName, itemLink, itemRarity, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture = GetItemInfo(bankPlayer[num].link)
-				local temp = strmatch(bankPlayer[num].link, "%[(.*)%]")
-				if strfind(strlower(temp), filterSearchText, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(strlower(_G[itemEquipLoc]), filterSearchText, 1, true)) then
+				local itemName, _, _, _, _, _, _, _, itemEquipLoc  = GetItemInfo(bankPlayer[num].link)
+				local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(bankPlayer[num].link, "%[(.*)%]")))
+				if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
 					ItemButtonAr[num].searchOverlay:Hide()
 				else
 					ItemButtonAr[num].searchOverlay:Show()
 				end
 			end
 		end
+		if not BankItems_Save.reagentBags then
+			BagButtonAr[105].showOverlay = true
+			BagButtonAr[105].searchOverlay:Hide()
+			for num = 1, NUM_REAGENTBANKGENERIC_SLOTS do --Reagent Bank Frame
+				if bankPlayer.Bag105[num] then
+					local itemName, _, _, _, _, _, _, _, itemEquipLoc  = GetItemInfo(bankPlayer.Bag105[num].link)
+					local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(bankPlayer.Bag105[num].link, "%[(.*)%]")))
+					if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
+						RBButtonAr[num].searchOverlay:Hide()
+						BagButtonAr[105].searchOverlay:Hide()
+						BagButtonAr[105].showOverlay = false
+					else
+						RBButtonAr[num].searchOverlay:Show()
+					end
+				else
+					RBButtonAr[num].searchOverlay:Hide()
+				end
+			end
+			if BagButtonAr[105].showOverlay then
+				BagButtonAr[105].searchOverlay:Show()
+			end
+		end
+		if not BankItems_Save.voidBags then
+			if bankPlayer.Bag104 then
+				local current = BankItems_VoidFrame.currentTab or 1
+				BagButtonAr[104].showOverlay = true
+				BagButtonAr[104].searchOverlay:Hide()
+				for tab = 1, VOID_STORAGE_PAGES do
+					VoidTabFrameAr[tab].showOverlay = true
+					VoidTabFrameAr[tab].searchOverlay:Hide()
+					for num = ((tab-1)*VOID_STORAGE_MAX + 1) , ((tab-1)*VOID_STORAGE_MAX + VOID_STORAGE_MAX) do
+						if bankPlayer.Bag104[num] then
+							local itemName, _, _, _, _, _, _, _, itemEquipLoc = GetItemInfo(bankPlayer.Bag104[num].link)
+							local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(bankPlayer.Bag104[num].link, "%[(.*)%]")))
+							if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
+								if  tab == current then
+									VoidButtonAr[num - ((tab-1) * VOID_STORAGE_MAX)].searchOverlay:Hide()
+								end
+								BagButtonAr[104].searchOverlay:Hide()
+								BagButtonAr[104].showOverlay = false
+								VoidTabFrameAr[tab].showOverlay = false
+							elseif tab == current then
+								VoidButtonAr[num - ((tab-1) * VOID_STORAGE_MAX)].searchOverlay:Show()
+							end
+						elseif tab == current then
+							VoidButtonAr[num - ((tab-1) * VOID_STORAGE_MAX)].searchOverlay:Hide()
+						end
+					end
+					if VoidTabFrameAr[tab].showOverlay then
+						VoidTabFrameAr[tab].searchOverlay:Show()
+					end
+				end
+				if BagButtonAr[104].showOverlay then
+					BagButtonAr[104].searchOverlay:Show()
+				end
+			else
+				for num = 1, VOID_STORAGE_PAGES do
+					VoidTabFrameAr[num].showOverlay = true
+					VoidTabFrameAr[num].searchOverlay:Show()
+				end
+				BagButtonAr[104].searchOverlay:Show()
+			end
+		end
+		if BankItems_GBFrame:IsVisible() then
+			if BankItems_GuildDropdown.selectedValue then
+				local selfGuild = BankItems_SaveGuild[BankItems_GuildDropdown.selectedValue]
+				local current = BankItems_GBFrame.currentTab or 1
+				for tab = 1, 8 do
+					GBTabFrameAr[tab].showOverlay = true
+					GBTabFrameAr[tab].searchOverlay:Hide()
+					if selfGuild[tab] and selfGuild[tab].seen then
+						for num = 1 , 98 do
+							if selfGuild[tab][num] then
+								local itemName, _, _, _, _, _, _, _, itemEquipLoc = GetItemInfo(selfGuild[tab][num].link)
+								local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(selfGuild[tab][num].link, "%[(.*)%]")))
+								if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
+									if tab == current then
+										GBButtonAr[num].searchOverlay:Hide()
+									end
+									GBTabFrameAr[tab].showOverlay = false
+								elseif tab == current then
+									GBButtonAr[num].searchOverlay:Show()
+								end
+							elseif tab == current then
+								GBButtonAr[num].searchOverlay:Hide()
+							end
+						end
+					end
+					if GBTabFrameAr[tab].showOverlay then
+						GBTabFrameAr[tab].searchOverlay:Show()
+					end
+				end
+			else
+				for num = 1, 8 do
+					GBTabFrameAr[num].showOverlay = true
+					GBTabFrameAr[num].searchOverlay:Show()
+				end
+			end
+		end
 		for _, bagID in ipairs(BAGNUMBERS) do
 			local theBag = bankPlayer[format("Bag%d", bagID)]
-			if theBag then
+			if theBag and (bagID ~= 105 or BankItems_Save.reagentBags) and (bagID ~= 104 or BankItems_Save.voidBags) then --skip Reagent and Void Storage bags unless option to show as a bag is set
+				BagButtonAr[bagID].showOverlay = true
 				for bagItem = 1, theBag.size do
 					local button = BagContainerAr[bagID][bagItem]
 					local idx = theBag.size - (bagItem - 1)
@@ -3436,13 +4155,21 @@ function BankItems_FilterBags()
 						idx = idx + (mailPage - 1) * 18
 					elseif (bagID == 103) then  -- Adjust for page number
 						idx = idx + (AHPage - 1) * 18
+					elseif bagID == 104 then -- Adjust for page number
+						idx = idx + (voidPage - 1) * voidPageSize
+						idx = slotAdjust[104][idx]
+					elseif (bagID == 105) then  -- Adjust for page number
+						idx = idx + (reagentBankPage - 1) * reagentBankPageSize
+						idx = slotAdjust[105][idx]
 					end
 					if theBag[idx] then
 						if type(theBag[idx].link) == "string" then
-							local itemName, itemLink, itemRarity, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture = GetItemInfo(theBag[idx].link)
-							local temp = strmatch(theBag[idx].link, "%[(.*)%]")
-							if strfind(strlower(temp), filterSearchText, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(strlower(_G[itemEquipLoc]), filterSearchText, 1, true)) then
+							local itemName, _, _, _, _, _, _, _, itemEquipLoc  = GetItemInfo(theBag[idx].link)
+							local temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag[idx].link, "%[(.*)%]")))
+							if strfind(temp, filterlocalized, 1, true) or (itemEquipLoc and _G[itemEquipLoc] and strfind(BankItems_SpecialCharactersLocalization(strlower(_G[itemEquipLoc])), filterlocalized, 1, true)) then
 								button.searchOverlay:Hide()
+								BagButtonAr[bagID].searchOverlay:Hide()
+								BagButtonAr[bagID].showOverlay = false
 							else
 								button.searchOverlay:Show()
 							end
@@ -3453,6 +4180,11 @@ function BankItems_FilterBags()
 						button.searchOverlay:Hide()
 					end
 				end
+				if BagButtonAr[bagID].showOverlay then
+					BagButtonAr[bagID].searchOverlay:Show()
+				end
+			elseif (bagID ~= 105 or BankItems_Save.reagentBags) and (bagID ~= 104 or BankItems_Save.voidBags) then
+				BagButtonAr[bagID].searchOverlay:Show()
 			end
 		end
 	end
@@ -3629,7 +4361,29 @@ function BankItems_UserDropdown_OnClick(button, playerName, text)
 	BankItems_SetPlayer(playerName)
 
 	BankItems_Frame_OnHide()
+	local validCount = 0
+	for i = 1, (VOID_STORAGE_PAGES*VOID_STORAGE_MAX) do
+		slotAdjust[104][i] = nil
+		if bankPlayer.Bag104 and bankPlayer.Bag104[i] then
+			validCount = validCount + 1
+			slotAdjust[104][validCount] = i
+		end
+	end
+	validCount = 0
+	for i = 1, NUM_REAGENTBANKGENERIC_SLOTS do
+		slotAdjust[105][i] = nil
+		if bankPlayer.Bag105 and bankPlayer.Bag105[i] then
+			validCount = validCount + 1
+			slotAdjust[105][validCount] = i
+		end
+	end
 	BankItems_PopulateFrame()
+	if not BankItems_Save.voidBags and BankItems_VoidFrame and BankItems_VoidFrame:IsVisible() then --update Void Storage Frame on character change if not displayed as a bag
+		BankItems_PopulateVoidStorage(BankItems_VoidFrame.currentTab)
+	end
+	if not BankItems_Save.reagentBags and BankItems_RBFrame and BankItems_RBFrame:IsVisible() then --update Reagent Bank Frame on character change if not displayed as a bag
+		BankItems_PopulateReagentBank()
+	end
 	BankItems_OpenBagsByBehavior(unpack(BankItems_Save.Behavior))
 end
 
@@ -3687,8 +4441,10 @@ function BankItems_GenerateExportText()
 			if bagNum ~= 103 and theBag then
 			--if theBag then
 				local realSize = theBag.size
-				if bagNum == 101 or bagNum == 104 or (bagNum == 105) then
+				if bagNum == 101 then
 					realSize = #theBag
+				elseif bagNum == 104 or bagNum == 105 then
+					realSize = theBag.realSize or #theBag --users of new version that haven't had void or reagent banks update on a character use #theBag since it will still work and others use the realSize saved variable
 				end
 				for bagItem = 1, realSize do
 					if theBag[bagItem] and type(theBag[bagItem].link) == "string" then
@@ -3703,6 +4459,19 @@ function BankItems_GenerateExportText()
 						else
 							errorflag = true
 						end
+					end
+				end
+				if type(theBag.link) == "string" then
+					itemName, itemLink, itemRarity, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture = GetItemInfo(theBag.link)
+					if itemType then
+						data[itemType] = data[itemType] or newTable()
+						data[itemType][itemName] = (data[itemType][itemName] or 0) + 1
+					elseif strmatch(theBag.link, "(currency:%d+)") then
+						itemName = BankItems_ParseLink(theBag.link)
+						data[CURRENCY] = data[CURRENCY] or newTable()
+						data[CURRENCY][itemName] = (data[CURRENCY][itemName] or 0) + 1
+					else
+						errorflag = true
 					end
 				end
 			end
@@ -3740,8 +4509,10 @@ function BankItems_GenerateExportText()
 			if bagNum ~= 103 and theBag then
 			--if theBag then
 				local realSize = theBag.size
-				if bagNum == 101 or bagNum == 104 or (bagNum == 105) then
+				if bagNum == 101 then
 					realSize = #theBag
+				elseif bagNum == 104 or bagNum == 105 then
+					realSize = theBag.realSize or #theBag
 				end
 				for bagItem = 1, realSize do
 					if theBag[bagItem] and type(theBag[bagItem].link) == "string" then
@@ -3764,6 +4535,13 @@ function BankItems_GenerateExportText()
 						t[line] = format("%s%d %s", prefix, theBag[bagItem].count or 1, BankItems_ParseLink(theBag[bagItem].link))
 					end
 				end
+				if type(theBag.link) == "string" then
+					if BankItems_Save.ExportPrefix then
+						prefix = L["Equipped"]..": "
+					end
+					line = line + 1
+					t[line] = format("%s%d %s", prefix, 1, BankItems_ParseLink(theBag.link))
+				end
 			end
 		end
 	end
@@ -3783,7 +4561,8 @@ function BankItems_Search(searchText)
 	local prefix = "     "
 	local temp
 	local count
-	searchText = strlower(searchText)
+	local searchTextOrg=searchText
+	searchText = BankItems_SpecialCharactersLocalization(strlower(searchText))
 
 	-- Search filter setup
 	local searchFilter = newTable()
@@ -3809,7 +4588,8 @@ function BankItems_Search(searchText)
 					for num = 1, NUM_BANKGENERIC_SLOTS do
 						if bankPlayer[num] then
 							temp = strmatch(bankPlayer[num].link, "%[(.*)%]")
-							if strfind(strlower(temp), searchText, 1, true) then
+							templocalized = BankItems_SpecialCharactersLocalization(strlower(strmatch(bankPlayer[num].link, "%[(.*)%]")))
+							if strfind(templocalized, searchText, 1, true) then
 								data[temp] = data[temp] or newTable()
 								data[temp][key] = data[temp][key] or newTable()
 								data[temp][key].count = (data[temp][key].count or 0) + (bankPlayer[num].count or 1)
@@ -3822,13 +4602,16 @@ function BankItems_Search(searchText)
 					local theBag = bankPlayer[format("Bag%d", bagNum)]
 					if searchFilter[bagNum] and theBag then
 						local realSize = theBag.size
-						if bagNum == 101 or bagNum == 104 or (bagNum == 105) then
+						if bagNum == 101 then
 							realSize = #theBag
+						elseif bagNum == 104 or bagNum == 105 then
+							realSize = theBag.realSize or #theBag
 						end
 						for bagItem = 1, realSize do
 							if theBag[bagItem] and type(theBag[bagItem].link) == "string" then
 								temp = strmatch(theBag[bagItem].link, "%[(.*)%]")
-								if strfind(strlower(temp), searchText, 1, true) then
+								templocalized = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag[bagItem].link, "%[(.*)%]")))
+								if strfind(templocalized, searchText, 1, true) then
 									data[temp] = data[temp] or newTable()
 									data[temp][key] = data[temp][key] or newTable()
 									data[temp][key].count = (data[temp][key].count or 0) + (theBag[bagItem].count or 1)
@@ -3850,6 +4633,16 @@ function BankItems_Search(searchText)
 								end
 							end
 						end
+						if type(theBag.link) == "string" then
+							temp = strmatch(theBag.link, "%[(.*)%]")
+							templocalized = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag.link, "%[(.*)%]")))
+							if strfind(templocalized, searchText, 1, true) then
+								data[temp] = data[temp] or newTable()
+								data[temp][key] = data[temp][key] or newTable()
+								data[temp][key].count = (data[temp][key].count or 0) + (theBag.count or 1)
+								data[temp][key].equipped = (data[temp][key].equipped or 0) + (theBag.count or 1)
+							end
+						end
 					end
 				end
 			end
@@ -3866,7 +4659,8 @@ function BankItems_Search(searchText)
 							for bagItem = 1, 98 do
 								if theBag[bagItem] then
 									temp = strmatch(theBag[bagItem].link, "%[(.*)%]")
-									if strfind(strlower(temp), searchText, 1, true) then
+									templocalized = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag[bagItem].link, "%[(.*)%]")))
+									if strfind(templocalized, searchText, 1, true) then
 										data[temp] = data[temp] or newTable()
 										data[temp][key] = data[temp][key] or newTable()
 										data[temp][key].count = (data[temp][key].count or 0) + (theBag[bagItem].count or 1)
@@ -3903,7 +4697,7 @@ function BankItems_Search(searchText)
 					name = gsub(who, "|", L[" of "])
 				end
 				totalCount = totalCount + counttable.count
-				
+
 				baginfos[1][2] = counttable.bank
 				baginfos[2][2] = counttable.inv
 				baginfos[3][2] = counttable.equipped
@@ -3943,7 +4737,7 @@ function BankItems_Search(searchText)
 							if BankItems_Save.ExportPrefix then
 								prefix = "     "..L["Bank Item %d:"]:format(num).." "
 							end
-							temp = strlower(strmatch(bankPlayer[num].link, "%[(.*)%]"))
+							temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(bankPlayer[num].link, "%[(.*)%]")))
 							if strfind(temp, searchText, 1, true) then
 								count = count + 1
 								if count == 1 then
@@ -3960,8 +4754,10 @@ function BankItems_Search(searchText)
 					local theBag = bankPlayer[format("Bag%d", bagNum)]
 					if searchFilter[bagNum] and theBag then
 						local realSize = theBag.size
-						if bagNum == 101 or bagNum == 104 or (bagNum == 105) then
+						if bagNum == 101  then
 							realSize = #theBag
+						elseif bagNum == 104 or bagNum == 105 then
+							realSize = theBag.realSize or #theBag
 						end
 						for bagItem = 1, realSize do
 							if theBag[bagItem] and type(theBag[bagItem].link) == "string" then
@@ -3980,7 +4776,7 @@ function BankItems_Search(searchText)
 										prefix = "     "..L["Bag %d Item %d:"]:format(bagNum, bagItem).." "
 									end
 								end
-								temp = strlower(strmatch(theBag[bagItem].link, "%[(.*)%]"))
+								temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag[bagItem].link, "%[(.*)%]")))
 								if strfind(temp, searchText, 1, true) then
 									count = count + 1
 									if count == 1 then
@@ -3990,6 +4786,18 @@ function BankItems_Search(searchText)
 									line = line + 1
 									t[line] = format("%s%d %s", prefix, theBag[bagItem].count or 1, BankItems_ParseLink(theBag[bagItem].link))
 								end
+							end
+						end
+						if type(theBag.link) == "string" then
+							temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag.link, "%[(.*)%]")))
+							if strfind(temp, searchText, 1, true) then
+								count = count + 1
+								if count == 1 then
+									line = line + 1
+									t[line] = L["Contents of:"].." "..gsub(key, "|", L[" of "])
+								end
+								line = line + 1
+								t[line] = format("%s%d %s", prefix, 1, BankItems_ParseLink(theBag.link))
 							end
 						end
 					end
@@ -4015,7 +4823,7 @@ function BankItems_Search(searchText)
 									if BankItems_Save.ExportPrefix then
 										prefix = "     "..L["Tab %d Item %d:"]:format(tab, bagItem).." "
 									end
-									temp = strlower(strmatch(theBag[bagItem].link, "%[(.*)%]"))
+									temp = BankItems_SpecialCharactersLocalization(strlower(strmatch(theBag[bagItem].link, "%[(.*)%]")))
 									if strfind(temp, searchText, 1, true) then
 										count = count + 1
 										if count == 1 then
@@ -4035,7 +4843,7 @@ function BankItems_Search(searchText)
 	end
 
 	line = line + 1
-	t[line] = "\n"..format(L[ [[Search for "%s" complete.]] ], searchText).."\n"
+	t[line] = "\n"..format(L[ [[Search for "%s" complete.]] ], searchTextOrg).."\n"
 
 	BankItems_DisplaySearch()
 	BankItems_ExportFrame_ScrollText:SetText(table.concat(t, "\n"))
@@ -4057,10 +4865,12 @@ function BankItems_DisplaySearch()
 end
 
 function BankItems_Hook_SendMail(recipient, subject, body)
+	local subCount = 0
 	-- Capitalize the first letter, lower the rest
 	recipient = string.upper(strsub(recipient, 1, 1))..strsub(recipient, 2)
-
-	if BankItems_Save[recipient.."|"..selfPlayerRealm] then
+	recipient, subCount = recipient:gsub("-","|",1) --mail sent to character on another realm
+	if subCount == 0 then recipient = recipient.."|"..selfPlayerRealm end --mail sent to character on own realm
+	if BankItems_Save[recipient] then --realm is already formatted above
 		-- Target recipient exists in our database, cache some data to be saved later if mail sending is successful
 		mailItem.recipient = recipient
 		for i = 1, ATTACHMENTS_MAX_SEND do
@@ -4084,7 +4894,7 @@ end
 hooksecurefunc("SendMail", BankItems_Hook_SendMail)
 
 function BankItems_Frame_MailSendSuccess()
-	local targetPlayer = BankItems_Save[mailItem.recipient.."|"..selfPlayerRealm]
+	local targetPlayer = BankItems_Save[mailItem.recipient]
 	targetPlayer.Bag101 = targetPlayer.Bag101 or newTable()
 	local targetBag = targetPlayer.Bag101
 	targetBag.icon = ICON_Mailbox
@@ -4128,8 +4938,11 @@ end
 
 local BankItems_Orig_ReturnInboxItem = ReturnInboxItem
 function ReturnInboxItem(index, ...)
+	local subCount = 0
 	local _, _, recipient, _, money, CODAmount, _, hasItem = GetInboxHeaderInfo(index)
-	if recipient and BankItems_Save[recipient.."|"..selfPlayerRealm] then
+	if recipient then recipient, subCount = recipient:gsub("-","|",1) end --mail sent to character on connected realm
+	if recipient and subCount == 0 then recipient = recipient.."|"..selfPlayerRealm end --mail sent to character on own realm
+	if recipient and BankItems_Save[recipient] then --realm is already formatted above
 		-- Target recipient exists in our database, set some data to be saved
 		mailItem.recipient = recipient
 		for i = 1, ATTACHMENTS_MAX_SEND do
@@ -4181,8 +4994,10 @@ function BankItems_Generate_ItemCache()
 				local theBag = bankPlayer[format("Bag%d", bagNum)]
 				if theBag then
 					local realSize = theBag.size
-					if bagNum == 101 or bagNum == 103 or bagNum == 104 or (bagNum == 105) then
+					if bagNum == 101 or bagNum == 103 then
 						realSize = #theBag
+					elseif bagNum == 104 or bagNum == 105 then
+						realSize = theBag.realSize or #theBag
 					end
 					for bagItem = 1, realSize do
 						if theBag[bagItem] and type(theBag[bagItem].link) == "string" then
@@ -4248,10 +5063,12 @@ function BankItems_Generate_SelfItemCache()
 		local theBag = bankPlayer[format("Bag%d", bagNum)]
 		if theBag then
 			local realSize = theBag.size
-			if bagNum == 101 or bagNum == 103 or bagNum == 104 or (bagNum == 105) then
+			if bagNum == 101 or bagNum == 103 then
 				realSize = #theBag
+			elseif bagNum == 104 or bagNum == 105 then
+				realSize = theBag.realSize or #theBag
 			end
-			
+
 			--print("Generating cache for: "..format("Bag%d", bagNum));
 			--print("bag size: "..format("%d", realSize or 0));
 			for bagItem = 1, realSize do
@@ -4301,7 +5118,7 @@ function BankItems_Generate_GuildItemCache()
 
 	for key, bankPlayer in pairs(BankItems_SaveGuild) do
 		local _, realm = strsplit("|", key)
-		if realm == selfPlayerRealm and bankPlayer.track and (BankItems_Save.ShowAllRealms or (BankItems_Save.ShowOppositeFaction or bankPlayer.faction == selfPlayer.faction)) then
+		if bankPlayer.track and (BankItems_Save.ShowAllRealms or (realm == selfPlayerRealm and (BankItems_Save.ShowOppositeFaction or bankPlayer.faction == selfPlayer.faction))) then
 			BankItems_GFactionCache[key] = bankPlayer.faction
 			for tab = 1, MAX_GUILDBANK_TABS do
 				if bankPlayer[tab] and bankPlayer[tab].seen then
@@ -4331,11 +5148,6 @@ function BankItems_Generate_GuildItemCache()
 	BankItems_TooltipCache = newTable()
 end
 
-local ignoreTooltipsTypes = {
-	[ITEM_BIND_QUEST] = true,
-	[ITEM_SOULBOUND] = true,
-	[ITEM_BIND_ON_PICKUP] = true,
-}
 function BankItems_AddTooltipData(self, ...)
 	if not BankItems_Save.TooltipInfo or self.BankItemsDone then return end
 
@@ -4347,18 +5159,9 @@ function BankItems_AddTooltipData(self, ...)
 	if not BankItems_TooltipCache[item] then
 		BankItems_TooltipCache[item] = newTable()
 
-		-- Check if the item is to be ignored because its unstackable and soulbound
-		if BankItems_Save.TTSoulbound then
-			local secondLine = _G[self:GetName().."TextLeft2"]:GetText()
-			local thirdLine = _G[self:GetName().."TextLeft3"]:GetText()
-			local fourthLine = _G[self:GetName().."TextLeft4"]:GetText()	-- fix for unstackable soulbound items
-			local fifthLine = _G[self:GetName().."TextLeft5"]:GetText()	-- fix for unstackable soulbound items
-			local sixthLine = _G[self:GetName().."TextLeft6"]:GetText()	-- fix for unstackable soulbound items
-			local itemStack = select(8, GetItemInfo(item))
-			if itemStack == 1 and (ignoreTooltipsTypes[secondLine] or ignoreTooltipsTypes[thirdLine] or ignoreTooltipsTypes[fourthLine] or ignoreTooltipsTypes[fifthLine] or ignoreTooltipsTypes[sixthLine]) then	-- fix for unstackable soulbound items
-				self.BankItemsDone = true
-				return
-			end
+		if item == 6948 or item == 110560 then--Ignore Hearthstone and Garrison Hearthstone
+			self.BankItemsDone = true
+			return
 		end
 
 		local baginfos = {
@@ -4413,7 +5216,7 @@ function BankItems_AddTooltipData(self, ...)
 					name = name.."*"
 				end
 				totalCount = totalCount + counttable.count
-				
+
 				baginfos[1][2] = counttable.bank
 				baginfos[2][2] = counttable.inv
 				baginfos[3][2] = counttable.equipped
@@ -4518,6 +5321,14 @@ function BankItems_Hooktooltip(tooltip)
 	tooltip.SetHyperlink = function(self, ...)
 		e(self, ...)
 		tooltip.BankItemsIsCurrency = strmatch(..., "(currency:%d+)")
+		BankItems_AddTooltipData(self)
+		tooltip.BankItemsIsCurrency = nil
+	end
+	
+	local f = tooltip.SetCurrencyTokenByID
+	tooltip.SetCurrencyTokenByID = function(self, ...)
+		f(self, ...)
+		tooltip.BankItemsIsCurrency = "currency:"..(...)
 		BankItems_AddTooltipData(self)
 		tooltip.BankItemsIsCurrency = nil
 	end
@@ -4755,6 +5566,7 @@ end
 function BankItems_PopulateGuildBank(guildName, tab)
 	local selfGuild = BankItems_SaveGuild[guildName]
 	tab = tab or 1
+	BankItems_GBFrame.currentTab = tab
 	if selfGuild[tab] then
 		-- Tab exists
 		if selfGuild[tab].seen then
@@ -4774,21 +5586,22 @@ function BankItems_PopulateGuildBank(guildName, tab)
 					else
 						GBButtonAr[i].IconBorder:Hide()
 					end
-					GBButtonAr[i].texture:SetTexture(GetItemIcon(selfGuild[tab][i].link))
+					GBButtonAr[i].icon:SetTexture(GetItemIcon(selfGuild[tab][i].link))
 					if selfGuild[tab][i].count then
-						GBButtonAr[i].count:Show()
-						GBButtonAr[i].count:SetText(selfGuild[tab][i].count)
+						GBButtonAr[i].Count:Show()
+						GBButtonAr[i].Count:SetText(selfGuild[tab][i].count)
 					else
-						GBButtonAr[i].count:Hide()
+						GBButtonAr[i].Count:Hide()
 					end
 				else
 					-- Item doesn't exist
-					GBButtonAr[i].texture:SetTexture()
+					GBButtonAr[i].icon:SetTexture()
 					GBButtonAr[i].IconBorder:Hide()
-					GBButtonAr[i].count:Hide()
+					GBButtonAr[i].Count:Hide()
 				end
 				GBButtonAr[i]:Show()
 			end
+			BankItems_FilterBags()
 		else
 			-- Tab hasn't been seen before, but exists
 			BankItems_GBFrame.title:SetText(selfGuild[tab].name.." |cFFFFFFFF"..L["(Not seen before)"])
@@ -4802,7 +5615,6 @@ function BankItems_PopulateGuildBank(guildName, tab)
 			end
 		end
 		BankItems_GBFrame.titlebg:SetWidth(BankItems_GBFrame.title:GetWidth()+20)
-		BankItems_GBFrame.currentTab = tab
 		for i = 1, MAX_GUILDBANK_TABS do
 			if i == tab then
 				GBTabFrameAr[i].button:SetChecked(1)
@@ -4830,7 +5642,12 @@ function BankItems_PopulateGuildTabs(guildName)
 	local selfGuild = BankItems_SaveGuild[guildName]
 	for i = 1, MAX_GUILDBANK_TABS do
 		if selfGuild[i] then
-			GBTabFrameAr[i].button.texture:SetTexture(selfGuild[i].icon)
+			local icon = selfGuild[i].icon
+			if tonumber(icon) then
+				GBTabFrameAr[i].button.texture:SetToFileData(icon)
+			else
+				GBTabFrameAr[i].button.texture:SetTexture(icon)
+			end
 			GBTabFrameAr[i]:Show()
 		else
 			GBTabFrameAr[i]:Hide()
@@ -4971,8 +5788,10 @@ SLASH_BANKITEMSGB1 = "/bigb"
 SLASH_BANKITEMSGB2 = "/bankitemsgb"
 SlashCmdList["BANKITEMSGB"] = BankItems_GBSlashHandler
 
--- Makes ESC key close BankItems Guild Bank
+-- Makes ESC key close BankItems Guild Bank, Reagent Bank, and Void Storage
 tinsert(UISpecialFrames, "BankItems_GBFrame")
+tinsert(UISpecialFrames, "BankItems_RBFrame")
+tinsert(UISpecialFrames, "BankItems_VoidFrame")
 
 do
 	local temp, temp2, temp3
@@ -4989,6 +5808,133 @@ do
 	temp:SetDisabledFontObject("GameFontDisableSmall")
 end
 
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Reagent Bank Stuff
+
+function BankItems_DisplayReagentBank()
+	if BankItems_RBFrame:IsVisible() then
+		HideUIPanel(BankItems_RBFrame)
+	else
+		ShowUIPanel(BankItems_RBFrame)
+	end
+end
+
+function BankItems_PopulateReagentBank()
+	if BankItems_Save.reagentBags then return end
+	if bankPlayer.Bag105 then
+		-- Reagent Bank has been seen before
+		BankItems_RBFrame.TitleText:SetText(REAGENT_BANK.." - "..gsub(bankPlayerName, "|", L[" of "]))
+		BankItems_RBFrame.infotext:Hide()
+		for i = 1, 7 do
+			BankItems_RBFrame.colShadow[i]:Show()
+			BankItems_RBFrame.colbg[i]:Show()
+		end
+		for i = 1, 98 do
+			if bankPlayer.Bag105[i] then
+				-- Item exists
+				local quality = select(3, GetItemInfo(bankPlayer.Bag105[i].link))
+				if quality and (quality >= LE_ITEM_QUALITY_COMMON and BAG_ITEM_QUALITY_COLORS[quality]) then
+					RBButtonAr[i].IconBorder:Show()
+					RBButtonAr[i].IconBorder:SetVertexColor(BAG_ITEM_QUALITY_COLORS[quality].r, BAG_ITEM_QUALITY_COLORS[quality].g, BAG_ITEM_QUALITY_COLORS[quality].b)
+				else
+					RBButtonAr[i].IconBorder:Hide()
+				end
+				RBButtonAr[i].icon:SetTexture(GetItemIcon(bankPlayer.Bag105[i].link))
+				if bankPlayer.Bag105[i].count then
+					RBButtonAr[i].Count:Show()
+					RBButtonAr[i].Count:SetText(bankPlayer.Bag105[i].count)
+				else
+					RBButtonAr[i].Count:Hide()
+				end
+			else
+				-- Item doesn't exist
+				RBButtonAr[i].icon:SetTexture()
+				RBButtonAr[i].IconBorder:Hide()
+				RBButtonAr[i].Count:Hide()
+			end
+			RBButtonAr[i]:Show()
+		end
+		BankItems_FilterBags()
+	else
+		-- Reagent Bank hasn't been seen before
+		BankItems_RBFrame.TitleText:SetText(REAGENT_BANK.." - "..gsub(bankPlayerName, "|", L[" of "]).." |cFFFFFFFF"..L["(Not seen before)"])
+		BankItems_RBFrame.infotext:SetFormattedText(L["%s data not found. Please log on this character."]:format(REAGENT_BANK))
+		BankItems_RBFrame.infotext:Show()
+		for i = 1, 7 do
+			BankItems_RBFrame.colbg[i]:Hide()
+			BankItems_RBFrame.colShadow[i]:Hide()
+		end
+		for i = 1, 98 do
+			RBButtonAr[i]:Hide()
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------
+-- Void Storage Stuff
+
+function BankItems_DisplayVoidStorage()
+	if BankItems_VoidFrame:IsVisible() then
+		HideUIPanel(BankItems_VoidFrame)
+	else
+		ShowUIPanel(BankItems_VoidFrame)
+	end
+end
+
+function BankItems_PopulateVoidStorage(tab)
+	if BankItems_Save.voidBags then return end
+	tab = tab or 1
+	BankItems_VoidFrame.currentTab = tab
+	local slotOffset = (tab - 1) * 80
+	if bankPlayer.Bag104 then
+		-- Void Storage has been seen before
+		BankItems_VoidFrame.title:SetText(VOID_STORAGE.." - "..gsub(bankPlayerName, "|", L[" of "]))
+		BankItems_VoidFrame.infotext:Hide()
+		BankItems_VoidFrame.StorageFrame:Show() --show frame containing all the void buttons
+		
+		for i = 1, 80 do
+			if bankPlayer.Bag104[i+slotOffset] then
+				-- Item exists
+				local quality = select(3, GetItemInfo(bankPlayer.Bag104[i+slotOffset].link))
+				if quality and (quality >= LE_ITEM_QUALITY_COMMON and BAG_ITEM_QUALITY_COLORS[quality]) then
+					VoidButtonAr[i].IconBorder:Show()
+					VoidButtonAr[i].IconBorder:SetVertexColor(BAG_ITEM_QUALITY_COLORS[quality].r, BAG_ITEM_QUALITY_COLORS[quality].g, BAG_ITEM_QUALITY_COLORS[quality].b)
+				else
+					VoidButtonAr[i].IconBorder:Hide()
+				end
+				VoidButtonAr[i].icon:SetTexture(GetItemIcon(bankPlayer.Bag104[i+slotOffset].link))
+				if bankPlayer.Bag104[i+slotOffset].count then
+					VoidButtonAr[i].Count:Show()
+					VoidButtonAr[i].Count:SetText(bankPlayer.Bag104[i+slotOffset].count)
+				else
+					VoidButtonAr[i].Count:Hide()
+				end
+			else
+				-- Item doesn't exist
+				VoidButtonAr[i].icon:SetTexture()
+				VoidButtonAr[i].IconBorder:Hide()
+				VoidButtonAr[i].Count:Hide()
+			end
+			--VoidButtonAr[i]:Show()
+		end
+		BankItems_FilterBags()
+	else
+		-- Void Storage hasn't been seen before
+		BankItems_VoidFrame.title:SetText(VOID_STORAGE.." - "..gsub(bankPlayerName, "|", L[" of "]).." |cFFFFFFFF"..L["(Not seen before)"])
+		BankItems_VoidFrame.infotext:SetFormattedText(L["%s data not found. Please visit the Void Storage on this character."]:format(VOID_STORAGE))
+		BankItems_VoidFrame.infotext:Show()
+		BankItems_VoidFrame.StorageFrame:Hide() --hide frame containing all the void buttons
+	end
+	for i = 1, 2 do
+		if i == tab then
+			VoidTabFrameAr[i].button:SetChecked(1)
+		else
+			VoidTabFrameAr[i].button:SetChecked(nil)
+		end
+	end
+end
 
 ---------------------------------------------------------------------------------------
 ---------------------------------------------------------------------------------------
@@ -5112,10 +6058,14 @@ do
 			BankItems_Save.LockWindow = false
 			BankItems_Frame:RegisterForDrag("LeftButton")
 			BankItems_GBFrame:RegisterForDrag("LeftButton")
+			BankItems_RBFrame:RegisterForDrag("LeftButton")
+			BankItems_VoidFrame:RegisterForDrag("LeftButton")
 		else
 			BankItems_Save.LockWindow = true
 			BankItems_Frame:RegisterForDrag()
 			BankItems_GBFrame:RegisterForDrag()
+			BankItems_RBFrame:RegisterForDrag()
+			BankItems_VoidFrame:RegisterForDrag()
 		end
 		self:SetChecked(BankItems_Save.LockWindow)
 	end)
@@ -5181,9 +6131,49 @@ do
 		end
 	end)
 
+	-- Option to restore showing Void Storage as a bag
+	BankItems_OptionsFrame_VoidBag = CreateFrame("CheckButton", "BankItems_OptionsFrame_VoidBag", BankItems_OptionsFrame, "InterfaceOptionsCheckButtonTemplate")
+	BankItems_OptionsFrame_VoidBag:SetPoint("TOPLEFT", 16, -123)
+	BankItems_OptionsFrame_VoidBag:SetHitRectInsets(0, -300, 0, 0)
+	BankItems_OptionsFrame_VoidBagText:SetText(L["Show void storage contents in a bag"])
+	BankItems_OptionsFrame_VoidBag:SetScript("OnClick", function(self)
+		if BankItems_Save.voidBags then
+			BankItems_Save.voidBags = false
+			if BagContainerAr[104]:IsVisible() then --if bag is visible close it since we want to show the new frame style now
+				BagContainerAr[104]:Hide()
+			end
+		else
+			BankItems_Save.voidBags = true
+			if BankItems_VoidFrame:IsVisible()  then --if new frame is visible close it since we want to show the bag now
+				HideUIPanel(BankItems_VoidFrame)
+			end
+		end
+		self:SetChecked(BankItems_Save.voidBags)
+	end)
+
+	-- Option to restore showing the Reagent Bank as a bag
+	BankItems_OptionsFrame_ReagentBag = CreateFrame("CheckButton", "BankItems_OptionsFrame_ReagentBag", BankItems_OptionsFrame, "InterfaceOptionsCheckButtonTemplate")
+	BankItems_OptionsFrame_ReagentBag:SetPoint("TOPLEFT", 16, -145)
+	BankItems_OptionsFrame_ReagentBag:SetHitRectInsets(0, -300, 0, 0)
+	BankItems_OptionsFrame_ReagentBagText:SetText(L["Show reagent bank contents in a bag"])
+	BankItems_OptionsFrame_ReagentBag:SetScript("OnClick", function(self)
+		if BankItems_Save.reagentBags then
+			BankItems_Save.reagentBags = false
+			if BagContainerAr[105]:IsVisible() then --if bag is visible close it since we want to show the new frame style now
+				BagContainerAr[105]:Hide()
+			end
+		else
+			BankItems_Save.reagentBags = true
+			if BankItems_RBFrame:IsVisible()  then --if new frame is visible close it since we want to show the bag now
+				HideUIPanel(BankItems_RBFrame)
+			end
+		end
+		self:SetChecked(BankItems_Save.reagentBags)
+	end)	
+
 	-- Add Tooltip Info checkbox
 	BankItems_OptionsFrame_TooltipInfo = CreateFrame("CheckButton", "BankItems_OptionsFrame_TooltipInfo", BankItems_OptionsFrame, "InterfaceOptionsCheckButtonTemplate")
-	BankItems_OptionsFrame_TooltipInfo:SetPoint("TOPLEFT", 16, -123)
+	BankItems_OptionsFrame_TooltipInfo:SetPoint("TOPLEFT", 16, -167)
 	BankItems_OptionsFrame_TooltipInfo:SetHitRectInsets(0, -300, 0, 0)
 	BankItems_OptionsFrame_TooltipInfoText:SetText(L["Show extra item tooltip information"])
 	BankItems_OptionsFrame_TooltipInfo:SetScript("OnClick", function(self)
@@ -5209,19 +6199,9 @@ do
 		self:SetChecked(BankItems_Save.TooltipInfo)
 	end)
 
-	-- Guildtooltip dropdown
-	BankItems_GTTDropDown = CreateFrame("Frame", "BankItems_GTTDropDown", BankItems_OptionsFrame, "UIDropDownMenuTemplate")
-	BankItems_GTTDropDown:SetPoint("TOPLEFT", 25, -157)
-	BankItems_GTTDropDown:SetHitRectInsets(16, 16, 0, 0)
-	UIDropDownMenu_SetWidth(BankItems_GTTDropDown, 300)
-	UIDropDownMenu_EnableDropDown(BankItems_GTTDropDown)
-	BankItems_GTTDropDown:CreateFontString("BankItems_GTTDropDownLabel", "BACKGROUND", "GameFontNormalSmall")
-	BankItems_GTTDropDownLabel:SetPoint("BOTTOMLEFT", BankItems_GTTDropDown, "TOPLEFT", 21, 1)
-	BankItems_GTTDropDownLabel:SetText(L["Include the following guild banks:"])
-
-	-- Ignore unstackable soulbound items
+	-- Ignore unstackable soulbound items --Moved since it looked like a sub-option for the guild dropdown in its previous position
 	BankItems_OptionsFrame_TTSoulbound = CreateFrame("CheckButton", "BankItems_OptionsFrame_TTSoulbound", BankItems_OptionsFrame, "InterfaceOptionsCheckButtonTemplate")
-	BankItems_OptionsFrame_TTSoulbound:SetPoint("TOPLEFT", 41, -184)
+	BankItems_OptionsFrame_TTSoulbound:SetPoint("TOPLEFT", 16, -189)
 	BankItems_OptionsFrame_TTSoulbound:SetHitRectInsets(0, -300, 0, 0)
 	BankItems_OptionsFrame_TTSoulboundText:SetText(L["Ignore unstackable soulbound items"])
 	BankItems_OptionsFrame_TTSoulbound:SetScript("OnClick", function(self)
@@ -5229,10 +6209,20 @@ do
 		delTable(BankItems_TooltipCache)
 		BankItems_TooltipCache = newTable()
 	end)
+	
+	-- Guildtooltip dropdown --align with other dropdown
+	BankItems_GTTDropDown = CreateFrame("Frame", "BankItems_GTTDropDown", BankItems_OptionsFrame, "UIDropDownMenuTemplate")
+	BankItems_GTTDropDown:SetPoint("TOPLEFT", 5, -228)
+	BankItems_GTTDropDown:SetHitRectInsets(16, 16, 0, 0)
+	UIDropDownMenu_SetWidth(BankItems_GTTDropDown, 320)
+	UIDropDownMenu_EnableDropDown(BankItems_GTTDropDown)
+	BankItems_GTTDropDown:CreateFontString("BankItems_GTTDropDownLabel", "BACKGROUND", "GameFontNormalSmall")
+	BankItems_GTTDropDownLabel:SetPoint("BOTTOMLEFT", BankItems_GTTDropDown, "TOPLEFT", 21, 1)
+	BankItems_GTTDropDownLabel:SetText(L["Include the following guild banks:"])
 
 	-- Behavior dropdown
 	BankItems_BehaviorDropDown = CreateFrame("Frame", "BankItems_BehaviorDropDown", BankItems_OptionsFrame, "UIDropDownMenuTemplate")
-	BankItems_BehaviorDropDown:SetPoint("TOPLEFT", 5, -224)
+	BankItems_BehaviorDropDown:SetPoint("TOPLEFT", 5, -268)
 	BankItems_BehaviorDropDown:SetHitRectInsets(16, 16, 0, 0)
 	UIDropDownMenu_SetWidth(BankItems_BehaviorDropDown, 320)
 	UIDropDownMenu_EnableDropDown(BankItems_BehaviorDropDown)
@@ -5244,7 +6234,7 @@ do
 	BankItems_ButtonRadiusSlider = CreateFrame("Slider", "BankItems_ButtonRadiusSlider", BankItems_OptionsFrame, "OptionsSliderTemplate")
 	BankItems_ButtonRadiusSlider:SetWidth(335)
 	BankItems_ButtonRadiusSlider:SetHeight(16)
-	BankItems_ButtonRadiusSlider:SetPoint("TOPLEFT", 25, -268)
+	BankItems_ButtonRadiusSlider:SetPoint("TOPLEFT", 25, -312)
 	BankItems_ButtonRadiusSliderLow:SetText("0")
 	BankItems_ButtonRadiusSliderHigh:SetText("200")
 	BankItems_ButtonRadiusSlider:SetMinMaxValues(0,200)
@@ -5259,7 +6249,7 @@ do
 	BankItems_ButtonPosSlider = CreateFrame("Slider", "BankItems_ButtonPosSlider", BankItems_OptionsFrame, "OptionsSliderTemplate")
 	BankItems_ButtonPosSlider:SetWidth(335)
 	BankItems_ButtonPosSlider:SetHeight(16)
-	BankItems_ButtonPosSlider:SetPoint("TOPLEFT", 25, -301)
+	BankItems_ButtonPosSlider:SetPoint("TOPLEFT", 25, -345)
 	BankItems_ButtonPosSliderLow:SetText("0")
 	BankItems_ButtonPosSliderHigh:SetText("360")
 	BankItems_ButtonPosSlider:SetMinMaxValues(0, 360)
@@ -5274,7 +6264,7 @@ do
 	BankItems_TransparencySlider = CreateFrame("Slider", "BankItems_TransparencySlider", BankItems_OptionsFrame, "OptionsSliderTemplate")
 	BankItems_TransparencySlider:SetWidth(335)
 	BankItems_TransparencySlider:SetHeight(16)
-	BankItems_TransparencySlider:SetPoint("TOPLEFT", 25, -334)
+	BankItems_TransparencySlider:SetPoint("TOPLEFT", 25, -378)
 	BankItems_TransparencySliderLow:SetText("25%")
 	BankItems_TransparencySliderHigh:SetText("100%")
 	BankItems_TransparencySlider:SetMinMaxValues(25, 100)
@@ -5284,13 +6274,15 @@ do
 		BankItems_Save.Transparency = value
 		BankItems_Frame:SetAlpha(value / 100)
 		BankItems_GBFrame:SetAlpha(value / 100)
+		BankItems_RBFrame:SetAlpha(value / 100)
+		BankItems_VoidFrame:SetAlpha(value / 100)
 	end)
 
 	-- Scale slider
 	BankItems_ScaleSlider = CreateFrame("Slider", "BankItems_ScaleSlider", BankItems_OptionsFrame, "OptionsSliderTemplate")
 	BankItems_ScaleSlider:SetWidth(335)
 	BankItems_ScaleSlider:SetHeight(16)
-	BankItems_ScaleSlider:SetPoint("TOPLEFT", 25, -367)
+	BankItems_ScaleSlider:SetPoint("TOPLEFT", 25, -411)
 	BankItems_ScaleSliderLow:SetText("50%")
 	BankItems_ScaleSliderHigh:SetText("100%")
 	BankItems_ScaleSlider:SetMinMaxValues(50, 100)
@@ -5300,6 +6292,8 @@ do
 		BankItems_Save.Scale = value
 		BankItems_Frame:SetScale(value / 100)
 		BankItems_GBFrame:SetScale(value / 100)
+		BankItems_RBFrame:SetScale(value / 100)
+		BankItems_VoidFrame:SetScale(value / 100)
 		if BankItems_Save.BagParent == 1 then
 			for _, i in ipairs(BAGNUMBERS) do
 				if BagContainerAr[i] then
@@ -5360,19 +6354,33 @@ function BankItems_Options_Init(self, event)
 	if BankItems_Save.ShowAllRealms == nil then
 		BankItems_Save.ShowAllRealms = false
 	end
+	if BankItems_Save.voidBags == nil then
+		BankItems_Save.voidBags = false
+	end
+	if BankItems_Save.reagentBags == nil then
+		BankItems_Save.reagentBags = false
+	end
 
 	-- Apply saved settings
 	if BankItems_Save.LockWindow then
 		BankItems_Frame:RegisterForDrag()
 		BankItems_GBFrame:RegisterForDrag()
+		BankItems_RBFrame:RegisterForDrag()
+		BankItems_VoidFrame:RegisterForDrag()
 	else
 		BankItems_Frame:RegisterForDrag("LeftButton")
 		BankItems_GBFrame:RegisterForDrag("LeftButton")
+		BankItems_RBFrame:RegisterForDrag("LeftButton")
+		BankItems_VoidFrame:RegisterForDrag("LeftButton")
 	end
 	BankItems_Frame:SetScale(BankItems_Save.Scale / 100)
 	BankItems_Frame:SetAlpha(BankItems_Save.Transparency / 100)
 	BankItems_GBFrame:SetScale(BankItems_Save.Scale / 100)
 	BankItems_GBFrame:SetAlpha(BankItems_Save.Transparency / 100)
+	BankItems_RBFrame:SetScale(BankItems_Save.Scale / 100)
+	BankItems_RBFrame:SetAlpha(BankItems_Save.Transparency / 100)
+	BankItems_VoidFrame:SetScale(BankItems_Save.Scale / 100)
+	BankItems_VoidFrame:SetAlpha(BankItems_Save.Transparency / 100)
 	if BankItems_Save.BagParent == 1 then
 		--for _, i in ipairs(BAGNUMBERS) do
 		--	BagContainerAr[i]:SetScale(BankItems_Save.Scale / 100)
@@ -5455,6 +6463,8 @@ function BankItems_Options_OnShow()
 	BankItems_OptionsFrame_MinimapButton:SetChecked(BankItems_Save.ButtonShown)
 	BankItems_OptionsFrame_WindowStyle:SetChecked(BankItems_Save.WindowStyle == 2)
 	BankItems_OptionsFrame_BagParent:SetChecked(BankItems_Save.BagParent == 2)
+	BankItems_OptionsFrame_VoidBag:SetChecked(BankItems_Save.voidBags)
+	BankItems_OptionsFrame_ReagentBag:SetChecked(BankItems_Save.reagentBags)
 	BankItems_OptionsFrame_TooltipInfo:SetChecked(BankItems_Save.TooltipInfo)
 	BankItems_ButtonRadiusSlider:SetValue(BankItems_Save.ButtonRadius)
 	BankItems_ButtonPosSlider:SetValue(BankItems_Save.ButtonPosition)
