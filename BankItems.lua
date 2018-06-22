@@ -378,6 +378,7 @@ local voidPageSize       = 18		-- integer, size of pages for bag 104
 local reagentBankPage    = 1		-- integer, current page of bag 105 (Reagent Bank)
 local reagentBankPageSize= 28		-- integer, size of pages for bag 105 (Reagent Bank)
 local BankItems_Quantity = 1		-- integer, used for hooking EnhTooltip data
+local KeystoneItemID     = 138019	-- integer, the item id of keystone
 local bagsToUpdate       = {}		-- table, stores data about bags to update on next OnUpdate
 local mailItem           = {}		-- table, stores data about the item to be mailed
 local sortedKeys         = {}		-- table, for sorted player drop-down menu
@@ -3929,6 +3930,9 @@ function BankItems_PopulateBag(bagID)
 						local _, peticon, _ = GetPetInfoBySpeciesID(speciesID);
 						quality = tonumber(breedQuality)
 						button.icon:SetTexture(peticon)
+					elseif link:find("Hkeystone") then
+						quality = select(3, GetItemInfo(KeystoneItemID))
+						button.icon:SetTexture(GetItemIcon(KeystoneItemID))
 					else
 						quality = select(3, GetItemInfo(link))
 						button.icon:SetTexture(GetItemIcon(link))
